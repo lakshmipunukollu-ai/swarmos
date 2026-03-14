@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #ffffff;
+  --surface: #f8f9fa;
+  --border: #e5e7eb;
+  --text: #111827;
+  --muted: #6b7280;
+  --green: #059669;
+  --amber: #d97706;
+  --red: #dc2626;
+  --blue: #2563eb;
+}
+
+.dark {
+  --bg: #0a0a0f;
+  --surface: #111118;
+  --border: #1e1e2e;
+  --text: #e8e8f0;
+  --muted: #6b6b8a;
+  --green: #00d97e;
+  --amber: #f5a623;
+  --red: #ff4d6a;
+  --blue: #4d9fff;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  transition: background 0.2s, color 0.2s;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.badge-queued { background: #e5e7eb; color: #374151; }
+.badge-building { background: #d1fae5; color: #065f46; }
+.badge-testing { background: #dbeafe; color: #1e40af; }
+.badge-done { background: #d1fae5; color: #065f46; border: 1px solid #059669; }
+.badge-error { background: #fee2e2; color: #991b1b; }
+
+.dark .badge-queued { background: #1f2937; color: #9ca3af; }
+.dark .badge-building { background: #064e3b; color: #6ee7b7; }
+.dark .badge-testing { background: #1e3a5f; color: #93c5fd; }
+.dark .badge-done { background: #064e3b; color: #6ee7b7; border-color: #00d97e; }
+.dark .badge-error { background: #450a0a; color: #fca5a5; }
+
+@keyframes progress-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+.progress-building { animation: progress-pulse 2s ease-in-out infinite; }
