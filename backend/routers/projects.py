@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from models import Project, BuildLog, ProjectStatus, get_db, QuizQuestion, QuizAttempt
 from seed_data import GAUNTLET_PROJECTS
+from services.watcher import import_all_project_logs
 from datetime import datetime, timezone
 from pydantic import BaseModel
 from typing import Optional
@@ -291,6 +292,65 @@ Format as JSON only (no markdown):
 
     return {**project_to_dict(p), "refreshed": True, "files_scanned": len(collected)}
 
+
+@router.post("/{project_id}/import-logs")
+def import_project_logs(project_id: str, db: Session = Depends(get_db)):
+    """
+    Imports historical logs from .agent_log.txt for a specific project.
+    Safe to run multiple times — uses line count watermark.
+    """
+    from pathlib import Path
+
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    projects_dir = os.getenv("SWARM_PROJECTS_DIR", os.path.expanduser("~/gauntlet-swarm/projects"))
+    log_path = Path(projects_dir) / project_id / ".agent_log.txt"
+
+    if not log_path.exists():
+        return {"imported": 0, "message": f"No .agent_log.txt found at {log_path}"}
+
+    all_lines = log_path.read_text(errors="replace").strip().splitlines()
+    existing_count = db.query(BuildLog).filter(BuildLog.project_id == project_id).count()
+    new_lines = all_lines[existing_count:]
+
+    imported = 0
+    for line in new_lines:
+        line = line.strip()
+        if not line:
+            continue
+        phase_match = re.match(r'^\[([^\]]+)\]', line)
+        phase = phase_match.group(1).lower() if phase_match else "general"
+
+        level = "info"
+        lower = line.lower()
+        if any(w in lower for w in ["error", "failed", "exception", "traceback"]):
+            level = "error"
+        elif any(w in lower for w in ["warning", "warn", "deprecated"]):
+            level = "warning"
+        elif any(w in lower for w in ["success", "complete", "done", "finished"]):
+            level = "success"
+
+        db.add(BuildLog(
+            project_id=project_id,
+            message=line,
+            level=level,
+            phase=phase,
+        ))
+        imported += 1
+
+    db.commit()
+    return {"imported": imported, "total_lines": len(all_lines), "message": f"Imported {imported} new log lines"}
+
+
+@router.post("/import-all-logs")
+def import_all_logs():
+    """Bulk import logs for all projects. Run once locally to populate historical logs."""
+    total = import_all_project_logs()
+    return {"imported": total, "message": f"Imported {total} total log lines"}
+
+
 @router.post("/{project_id}/hiring-lens")
 def get_hiring_lens(project_id: str, db: Session = Depends(get_db)):
     """
@@ -351,11 +411,36 @@ Format as JSON only (no markdown):
         raise HTTPException(status_code=500, detail=f"Hiring lens failed: {str(e)}")
 
 @router.get("/{project_id}/logs")
-def get_logs(project_id: str, limit: int = 100, db: Session = Depends(get_db)):
+def get_logs(project_id: str, limit: int = 500, grouped: bool = False, db: Session = Depends(get_db)):
     logs = db.query(BuildLog).filter(BuildLog.project_id == project_id)\
-        .order_by(BuildLog.created_at.desc()).limit(limit).all()
-    return [{"id": l.id, "message": l.message, "level": l.level,
-             "phase": l.phase, "created_at": l.created_at.isoformat()} for l in reversed(logs)]
+        .order_by(BuildLog.created_at.asc()).limit(limit).all()
+
+    log_list = [{"id": l.id, "message": l.message, "level": l.level,
+                 "phase": l.phase or "general", "created_at": l.created_at.isoformat()} for l in logs]
+
+    if not grouped:
+        return log_list
+
+    # Group by phase
+    from collections import OrderedDict
+    groups = OrderedDict()
+    for log in log_list:
+        phase = log["phase"] or "general"
+        if phase not in groups:
+            groups[phase] = []
+        groups[phase].append(log)
+
+    return [
+        {
+            "phase": phase,
+            "count": len(entries),
+            "level": next((e["level"] for e in entries if e["level"] in ["error", "warning"]), "info"),
+            "preview": entries[0]["message"][:120] if entries else "",
+            "last": entries[-1]["message"][:120] if entries else "",
+            "entries": entries,
+        }
+        for phase, entries in groups.items()
+    ]
 
 
 @router.post("/webhook/railway")

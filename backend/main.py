@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import asyncio
 from models import create_tables, SessionLocal, Project
 from seed_data import GAUNTLET_PROJECTS
-from routers import projects, quiz, intake, study
+from routers import projects, quiz, intake, study, interview
 from services.watcher import sync_project_status
 
 
@@ -53,6 +53,7 @@ app.include_router(projects.router)
 app.include_router(quiz.router)
 app.include_router(intake.router)
 app.include_router(study.router)
+app.include_router(interview.router)
 
 
 @app.get("/health")

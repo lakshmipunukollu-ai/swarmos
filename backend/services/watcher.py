@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from pathlib import Path
 from models import SessionLocal, Project, BuildLog, ProjectStatus
@@ -6,6 +7,14 @@ from datetime import datetime, timezone
 
 
 PROJECTS_DIR = os.getenv("SWARM_PROJECTS_DIR", os.path.expanduser("~/gauntlet-swarm/projects"))
+
+
+def is_frontend_url(url: str) -> bool:
+    """Returns True if the URL looks like a frontend deployment."""
+    if not url:
+        return False
+    frontend_patterns = ["-frontend-", "vercel.app", "netlify.app", "pages.dev"]
+    return any(p in url for p in frontend_patterns)
 
 
 def count_files(project_path: str) -> int:
@@ -51,6 +60,10 @@ def sync_project_status():
                 continue
 
             agent_status = get_agent_status(project_path)
+            # Only update live_url if current one is NOT a known frontend URL
+            agent_live_url = agent_status.get("live_url", "")
+            if agent_live_url and not is_frontend_url(project.live_url or ""):
+                project.live_url = agent_live_url
             files_count = count_files(project_path)
             all_lines = get_all_log_lines(project_path)
             last_log = all_lines[-1] if all_lines else ""
@@ -93,5 +106,62 @@ def sync_project_status():
                 project.elapsed_seconds = elapsed
 
         db.commit()
+    finally:
+        db.close()
+
+
+def import_all_project_logs():
+    """
+    One-time bulk import of all .agent_log.txt files into BuildLog table.
+    Safe to run multiple times — uses line count watermark to avoid duplicates.
+    """
+    db = SessionLocal()
+    try:
+        projects = db.query(Project).all()
+        total_imported = 0
+        for project in projects:
+            project_path = os.path.join(PROJECTS_DIR, project.id)
+            log_path = Path(project_path) / ".agent_log.txt"
+            if not log_path.exists():
+                continue
+
+            all_lines = log_path.read_text(errors="replace").strip().splitlines()
+            existing_count = db.query(BuildLog).filter(
+                BuildLog.project_id == project.id
+            ).count()
+
+            new_lines = all_lines[existing_count:]
+            for line in new_lines:
+                line = line.strip()
+                if not line:
+                    continue
+                # Detect phase from brackets e.g. [setup], [build], [cleanup]
+                phase_match = re.match(r'^\[([^\]]+)\]', line)
+                phase = phase_match.group(1).lower() if phase_match else "general"
+
+                # Detect level
+                level = "info"
+                lower = line.lower()
+                if any(w in lower for w in ["error", "failed", "exception", "traceback"]):
+                    level = "error"
+                elif any(w in lower for w in ["warning", "warn", "deprecated"]):
+                    level = "warning"
+                elif any(w in lower for w in ["success", "complete", "done", "finished"]):
+                    level = "success"
+
+                db.add(BuildLog(
+                    project_id=project.id,
+                    message=line,
+                    level=level,
+                    phase=phase,
+                ))
+                total_imported += 1
+
+            if new_lines:
+                db.commit()
+                print(f"Imported {len(new_lines)} log lines for {project.id}")
+
+        print(f"Total imported: {total_imported} log lines across all projects")
+        return total_imported
     finally:
         db.close()

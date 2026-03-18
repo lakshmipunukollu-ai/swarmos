@@ -18,6 +18,11 @@ export default function ProjectDetail() {
   const id = params.id as string
   const [project, setProject] = useState<Project | null>(null)
   const [logs, setLogs] = useState<any[]>([])
+  const [groupedLogs, setGroupedLogs] = useState<any[]>([])
+  const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set())
+  const [logSearch, setLogSearch] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [logView, setLogView] = useState<'grouped' | 'flat'>('grouped')
   const [tab, setTab] = useState('overview')
   const [loading, setLoading] = useState(true)
   const [autoScroll, setAutoScroll] = useState(true)
@@ -29,9 +34,14 @@ export default function ProjectDetail() {
   const [hiringLoading, setHiringLoading] = useState(false)
 
   const load = useCallback(async () => {
-    const [p, l] = await Promise.all([api.getProject(id), api.getLogs(id)])
+    const [p, l, gl] = await Promise.all([
+      api.getProject(id),
+      api.getLogs(id),
+      api.getLogsGrouped(id),
+    ])
     setProject(p)
     setLogs(l)
+    setGroupedLogs(gl)
     setLoading(false)
   }, [id])
 
@@ -89,6 +99,25 @@ export default function ProjectDetail() {
     if (!logsContainerRef.current) return
     const { scrollTop, scrollHeight, clientHeight } = logsContainerRef.current
     setAutoScroll(scrollHeight - scrollTop - clientHeight < 50)
+  }
+
+  const handleImportLogs = async () => {
+    setImporting(true)
+    try {
+      await api.importProjectLogs(id)
+      await load()
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const togglePhase = (phase: string) => {
+    setExpandedPhases(prev => {
+      const next = new Set(prev)
+      if (next.has(phase)) next.delete(phase)
+      else next.add(phase)
+      return next
+    })
   }
 
   if (loading) return <div style={{ color: 'var(--muted)', padding: 40 }}>Loading...</div>
@@ -291,50 +320,143 @@ export default function ProjectDetail() {
 
       {tab === 'logs' && (
         <div style={{ width: '100%' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>{logs.length} log entries</div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 11, color: 'var(--muted)' }}>Auto-scroll</span>
-              <button onClick={() => setAutoScroll(!autoScroll)} style={{
-                fontSize: 10, padding: '3px 10px', borderRadius: 20, cursor: 'pointer', fontFamily: 'monospace',
-                border: '1px solid var(--border)',
-                background: autoScroll ? 'var(--green)' : 'transparent',
-                color: autoScroll ? '#000' : 'var(--muted)',
-              }}>{autoScroll ? 'ON' : 'OFF'}</button>
-              <button onClick={() => setLogs([])} style={{ fontSize: 10, padding: '3px 10px', borderRadius: 20, cursor: 'pointer', fontFamily: 'monospace', border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)' }}>Clear</button>
+          {/* Toolbar */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+            <input
+              value={logSearch}
+              onChange={e => setLogSearch(e.target.value)}
+              placeholder="Search logs..."
+              style={{
+                flex: 1, padding: '7px 12px', background: 'var(--surface)',
+                border: '1px solid var(--border)', borderRadius: 6,
+                color: 'var(--text)', fontSize: 12, outline: 'none', fontFamily: 'monospace',
+              }}
+            />
+            <button onClick={() => setLogView(v => v === 'grouped' ? 'flat' : 'grouped')} style={{
+              padding: '7px 14px', fontSize: 11, borderRadius: 6,
+              border: '1px solid var(--border)', background: 'transparent',
+              color: 'var(--muted)', cursor: 'pointer', fontFamily: 'monospace',
+            }}>
+              {logView === 'grouped' ? 'Flat view' : 'Grouped view'}
+            </button>
+            <button onClick={handleImportLogs} disabled={importing} style={{
+              padding: '7px 14px', fontSize: 11, borderRadius: 6,
+              border: '1px solid var(--border)', background: 'transparent',
+              color: importing ? 'var(--border)' : 'var(--amber)', cursor: importing ? 'not-allowed' : 'pointer',
+              fontFamily: 'monospace',
+            }}>
+              {importing ? 'Importing...' : '↓ Import logs'}
+            </button>
+          </div>
+
+          {/* Grouped view */}
+          {logView === 'grouped' && (
+            <div>
+              {groupedLogs.length === 0 && (
+                <div style={{ color: 'var(--muted)', fontSize: 12, padding: 16 }}>
+                  No logs yet. Click "↓ Import logs" to load agent logs from disk.
+                  {project.last_log && <div style={{ marginTop: 8, color: 'var(--text)' }}>Last known: {project.last_log}</div>}
+                </div>
+              )}
+              {groupedLogs
+                .filter(g => !logSearch || g.entries.some((e: any) => e.message.toLowerCase().includes(logSearch.toLowerCase())))
+                .map((group: any) => {
+                  const isExpanded = expandedPhases.has(group.phase)
+                  const phaseColor = group.level === 'error' ? 'var(--red)' : group.level === 'warning' ? 'var(--amber)' : group.level === 'success' ? 'var(--green)' : 'var(--muted)'
+                  const filteredEntries = logSearch
+                    ? group.entries.filter((e: any) => e.message.toLowerCase().includes(logSearch.toLowerCase()))
+                    : group.entries
+
+                  return (
+                    <div key={group.phase} style={{ marginBottom: 6 }}>
+                      {/* Phase header */}
+                      <button
+                        onClick={() => togglePhase(group.phase)}
+                        style={{
+                          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '10px 14px', background: 'var(--surface)',
+                          border: '1px solid var(--border)', borderRadius: isExpanded ? '8px 8px 0 0' : 8,
+                          cursor: 'pointer', textAlign: 'left',
+                        }}
+                      >
+                        <span style={{ fontSize: 12, color: phaseColor, flexShrink: 0 }}>
+                          {isExpanded ? '▼' : '▶'}
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>
+                          [{group.phase}]
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {group.preview}
+                        </span>
+                        <span style={{ fontSize: 10, color: 'var(--border)', flexShrink: 0 }}>
+                          {group.count} lines
+                        </span>
+                      </button>
+
+                      {/* Expanded entries */}
+                      {isExpanded && (
+                        <div style={{
+                          background: 'var(--bg)', border: '1px solid var(--border)',
+                          borderTop: 'none', borderRadius: '0 0 8px 8px',
+                          fontFamily: 'monospace', fontSize: 11, lineHeight: 1.8,
+                          maxHeight: 400, overflowY: 'auto', padding: '8px 14px',
+                        }}>
+                          {filteredEntries.map((entry: any, i: number) => (
+                            <div key={entry.id || i} style={{
+                              display: 'flex', gap: 10, padding: '2px 0',
+                              borderBottom: '1px solid rgba(255,255,255,0.02)',
+                              color: LOG_COLORS[entry.level] || 'var(--text)',
+                            }}>
+                              <span style={{ color: 'var(--border)', flexShrink: 0, fontSize: 10 }}>
+                                {new Date(entry.created_at).toLocaleTimeString()}
+                              </span>
+                              <span style={{ wordBreak: 'break-word' }}>{entry.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
             </div>
-          </div>
-          <div ref={logsContainerRef} onScroll={handleScroll} style={{
-            fontFamily: 'monospace', fontSize: 12, background: 'var(--surface)',
-            borderRadius: 8, padding: 16, border: '1px solid var(--border)',
-            lineHeight: 1.8, height: 'calc(100vh - 320px)', overflowY: 'auto',
-          }}>
-            {logs.length === 0 && (
-              <div>
-                <div style={{ color: 'var(--muted)', marginBottom: 8 }}>No structured logs yet.</div>
-                {project.last_log && (
-                  <div style={{ color: 'var(--text)', fontFamily: 'monospace', fontSize: 11 }}>
-                    Last known: {project.last_log}
+          )}
+
+          {/* Flat view */}
+          {logView === 'flat' && (
+            <div ref={logsContainerRef} onScroll={handleScroll} style={{
+              fontFamily: 'monospace', fontSize: 12, background: 'var(--surface)',
+              borderRadius: 8, padding: 16, border: '1px solid var(--border)',
+              lineHeight: 1.8, height: 'calc(100vh - 320px)', overflowY: 'auto',
+            }}>
+              {logs.length === 0 && (
+                <div style={{ color: 'var(--muted)' }}>
+                  No logs yet. Click "↓ Import logs" to load agent logs from disk.
+                </div>
+              )}
+              {logs
+                .filter(l => !logSearch || l.message.toLowerCase().includes(logSearch.toLowerCase()))
+                .map((l: any, i: number) => (
+                  <div key={l.id || i} style={{
+                    display: 'flex', gap: 12, padding: '1px 0',
+                    borderBottom: '1px solid rgba(255,255,255,0.02)',
+                  }}>
+                    <span style={{ color: 'var(--border)', flexShrink: 0, fontSize: 10 }}>
+                      {new Date(l.created_at).toLocaleTimeString()}
+                    </span>
+                    <span style={{ color: 'var(--border)', flexShrink: 0, fontSize: 10, minWidth: 50, textTransform: 'uppercase' }}>
+                      [{l.level}]
+                    </span>
+                    {l.phase && (
+                      <span style={{ color: 'var(--blue)', flexShrink: 0, fontSize: 10 }}>[{l.phase}]</span>
+                    )}
+                    <span style={{ color: LOG_COLORS[l.level] || 'var(--text)', wordBreak: 'break-word' }}>
+                      {l.message}
+                    </span>
                   </div>
-                )}
-              </div>
-            )}
-            {logs.map((l, i) => (
-              <div key={l.id || i} style={{ display: 'flex', gap: 12, padding: '1px 0', borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                <span style={{ color: 'var(--border)', flexShrink: 0, fontSize: 10 }}>
-                  {new Date(l.created_at).toLocaleTimeString()}
-                </span>
-                <span style={{ color: 'var(--border)', flexShrink: 0, fontSize: 10, minWidth: 50, textTransform: 'uppercase' }}>
-                  [{l.level}]
-                </span>
-                {l.phase && <span style={{ color: 'var(--blue)', flexShrink: 0, fontSize: 10 }}>[{l.phase}]</span>}
-                <span style={{ color: LOG_COLORS[l.level] || (i === logs.length - 1 ? 'var(--green)' : 'var(--text)') }}>
-                  {l.message}
-                </span>
-              </div>
-            ))}
-            <div ref={logsEndRef} />
-          </div>
+                ))}
+              <div ref={logsEndRef} />
+            </div>
+          )}
         </div>
       )}
 
@@ -350,6 +472,14 @@ export default function ProjectDetail() {
             color: '#000', borderRadius: 6, textDecoration: 'none', fontWeight: 700, fontSize: 14, fontFamily: 'monospace',
           }}>
             Start quiz for {project.name} →
+          </Link>
+          <Link href={`/interview?project=${project.id}`} style={{
+            display: 'inline-block', marginTop: 12, padding: '10px 24px',
+            background: 'transparent', color: 'var(--amber)',
+            border: '1px solid var(--amber)', borderRadius: 6,
+            textDecoration: 'none', fontWeight: 700, fontSize: 13, fontFamily: 'monospace',
+          }}>
+            Practice interview for {project.name} →
           </Link>
         </div>
       )}

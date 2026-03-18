@@ -53,6 +53,14 @@ export const api = {
     const r = await fetch(`${API}/api/projects/${id}/logs?limit=200`, { cache: 'no-store' })
     return r.json()
   },
+  async importProjectLogs(id: string) {
+    const r = await fetch(`${API}/api/projects/${id}/import-logs`, { method: 'POST' })
+    return r.json()
+  },
+  async getLogsGrouped(id: string) {
+    const r = await fetch(`${API}/api/projects/${id}/logs?grouped=true&limit=500`, { cache: 'no-store' })
+    return r.json()
+  },
   async analyzeIntake(brief: string) {
     const r = await fetch(`${API}/api/intake/analyze`, {
       method: 'POST',
@@ -151,6 +159,30 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question_id, is_correct }),
     })
+    return r.json()
+  },
+  async startInterview(project_id: string, interview_type: string, difficulty: string) {
+    const r = await fetch(`${API}/api/interview/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, interview_type, difficulty }),
+    })
+    return r.json()
+  },
+  async submitAnswer(session_id: number, answer: string) {
+    const r = await fetch(`${API}/api/interview/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id, answer }),
+    })
+    return r.json()
+  },
+  async completeInterview(session_id: number) {
+    const r = await fetch(`${API}/api/interview/complete/${session_id}`, { method: 'POST' })
+    return r.json()
+  },
+  async getInterviewSessions(project_id: string) {
+    const r = await fetch(`${API}/api/interview/sessions/${project_id}`, { cache: 'no-store' })
     return r.json()
   },
 }

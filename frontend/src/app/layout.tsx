@@ -27,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     { href: '/intake', label: 'Add project' },
     { href: '/quiz', label: 'Quiz' },
     { href: '/study', label: 'Study' },
+    { href: '/interview', label: 'Interview' },
   ]
 
   return (

@@ -106,6 +106,29 @@ class StudyQuestion(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class InterviewSession(Base):
+    __tablename__ = "interview_sessions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String, nullable=False)
+    interview_type = Column(String, nullable=False)  # behavioral, technical, coding, system_design
+    difficulty = Column(String, default="balanced")  # coaching, balanced, faang
+    status = Column(String, default="active")  # active, completed
+    score = Column(Integer, nullable=True)  # 0-100 final score
+    feedback = Column(Text, default="")  # final feedback summary
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    completed_at = Column(DateTime, nullable=True)
+
+
+class InterviewMessage(Base):
+    __tablename__ = "interview_messages"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Integer, nullable=False)
+    role = Column(String, nullable=False)  # interviewer, candidate
+    content = Column(Text, nullable=False)
+    evaluation = Column(Text, default="")  # JSON: {score, strengths, weaknesses, tip}
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def get_db():
     db = SessionLocal()
     try:
