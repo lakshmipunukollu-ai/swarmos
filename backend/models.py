@@ -189,8 +189,11 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
 
     # Enable pgvector extension
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    except Exception:
+        pass  # pgvector not available on this system
 
 def get_db():
     db = SessionLocal()
