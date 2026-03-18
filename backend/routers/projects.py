@@ -41,6 +41,12 @@ class RailwayWebhookPayload(BaseModel):
     environment: Optional[dict] = None
 
 
+class GitHubImportRequest(BaseModel):
+    repo_url: str
+    company: str = ""
+    brief: str = ""
+
+
 def project_to_dict(p):
     elapsed = p.elapsed_seconds or 0
     estimated = (p.estimated_minutes or 120) * 60
@@ -446,12 +452,6 @@ class WhyCompanyRequest(BaseModel):
     project_id: str
     job_description: str
     company_name: str
-
-
-class GitHubImportRequest(BaseModel):
-    repo_url: str  # e.g. https://github.com/username/repo-name
-    company: str = ""
-    brief: str = ""
 
 
 @router.post("/{project_id}/toggle-featured")
