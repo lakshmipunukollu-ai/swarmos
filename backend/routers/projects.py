@@ -274,6 +274,21 @@ Format as JSON only (no markdown):
     p.files_count = total
 
     db.commit()
+
+    # Auto-regenerate quiz questions with the new summary
+    try:
+        from services.quiz_engine import generate_questions
+        # Clear old questions for this project
+        db.query(QuizQuestion).filter(QuizQuestion.project_id == project_id).delete()
+        db.commit()
+        # Generate fresh questions for core types
+        for qtype in ["architecture", "flashcard", "code"]:
+            for level in [1, 2, 3]:
+                generate_questions(project_id, qtype, level, count=2)
+        print(f"Quiz questions regenerated for {project_id}")
+    except Exception as e:
+        print(f"Quiz regeneration failed (non-fatal): {e}")
+
     return {**project_to_dict(p), "refreshed": True, "files_scanned": len(collected)}
 
 @router.post("/{project_id}/hiring-lens")

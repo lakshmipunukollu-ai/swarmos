@@ -81,6 +81,31 @@ class QuizAttempt(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class StudySession(Base):
+    __tablename__ = "study_sessions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String, nullable=False)
+    subject = Column(String, default="")
+    content_type = Column(String, default="text")  # text, pdf, image, url
+    raw_content = Column(Text, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class StudyQuestion(Base):
+    __tablename__ = "study_questions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Integer, nullable=False)
+    question = Column(Text, nullable=False)
+    correct_answer = Column(Text, nullable=False)
+    wrong_answers = Column(Text, default="[]")
+    explanation = Column(Text, default="")
+    question_type = Column(String, default="multiple_choice")
+    level = Column(Integer, default=1)
+    times_shown = Column(Integer, default=0)
+    times_correct = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -109,3 +134,6 @@ def create_tables():
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE projects ADD COLUMN hiring_notes TEXT DEFAULT ''"))
             conn.commit()
+
+    # Create new study tables if they don't exist
+    Base.metadata.create_all(bind=engine)

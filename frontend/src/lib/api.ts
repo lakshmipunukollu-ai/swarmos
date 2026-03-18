@@ -112,4 +112,45 @@ export const api = {
     )
     return r.json()
   },
+  async uploadStudyText(title: string, subject: string, content: string) {
+    const r = await fetch(`${API}/api/study/upload/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, subject, content }),
+    })
+    return r.json()
+  },
+  async uploadStudyUrl(title: string, subject: string, url: string) {
+    const r = await fetch(`${API}/api/study/upload/url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, subject, url }),
+    })
+    return r.json()
+  },
+  async uploadStudyFile(title: string, subject: string, file_base64: string, media_type: string) {
+    const endpoint = media_type === 'application/pdf' ? 'pdf' : 'image'
+    const r = await fetch(`${API}/api/study/upload/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, subject, file_base64, media_type }),
+    })
+    return r.json()
+  },
+  async getStudySessions() {
+    const r = await fetch(`${API}/api/study/sessions`, { cache: 'no-store' })
+    return r.json()
+  },
+  async getStudyQuestions(sessionId: number) {
+    const r = await fetch(`${API}/api/study/sessions/${sessionId}/questions`, { cache: 'no-store' })
+    return r.json()
+  },
+  async submitStudyAttempt(question_id: number, is_correct: boolean) {
+    const r = await fetch(`${API}/api/study/attempt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question_id, is_correct }),
+    })
+    return r.json()
+  },
 }
