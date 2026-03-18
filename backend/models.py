@@ -112,6 +112,7 @@ class InterviewSession(Base):
     project_id = Column(String, nullable=False)
     interview_type = Column(String, nullable=False)  # behavioral, technical, coding, system_design
     difficulty = Column(String, default="balanced")  # coaching, balanced, faang
+    target_company = Column(String, default="")
     status = Column(String, default="active")  # active, completed
     score = Column(Integer, nullable=True)  # 0-100 final score
     feedback = Column(Text, default="")  # final feedback summary
@@ -127,6 +128,17 @@ class InterviewMessage(Base):
     content = Column(Text, nullable=False)
     evaluation = Column(Text, default="")  # JSON: {score, strengths, weaknesses, tip}
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class WeakSpot(Base):
+    __tablename__ = "weak_spots"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String, nullable=False)
+    topic = Column(String, nullable=False)
+    interview_type = Column(String, nullable=False)
+    avg_score = Column(Integer, default=0)
+    occurrences = Column(Integer, default=0)
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 def get_db():
@@ -156,6 +168,12 @@ def create_tables():
     if "hiring_notes" not in [c["name"] for c in insp.get_columns("projects")]:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE projects ADD COLUMN hiring_notes TEXT DEFAULT ''"))
+            conn.commit()
+
+    # Add target_company to interview_sessions if missing
+    if "interview_sessions" in insp.get_table_names() and "target_company" not in [c["name"] for c in insp.get_columns("interview_sessions")]:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN target_company TEXT DEFAULT ''"))
             conn.commit()
 
     # Create new study tables if they don't exist

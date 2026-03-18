@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from models import SessionLocal, InterviewSession, InterviewMessage, Project
@@ -12,8 +13,9 @@ router = APIRouter(prefix="/api/interview", tags=["interview"])
 
 class StartRequest(BaseModel):
     project_id: str
-    interview_type: str  # behavioral, technical, coding, system_design
-    difficulty: str = "balanced"  # coaching, balanced, faang
+    interview_type: str
+    difficulty: str = "balanced"
+    target_company: str = ""
 
 
 class AnswerRequest(BaseModel):
@@ -43,13 +45,14 @@ def start_interview(req: StartRequest):
             project_id=req.project_id,
             interview_type=req.interview_type,
             difficulty=req.difficulty,
+            target_company=req.target_company,
         )
         db.add(session)
         db.commit()
         db.refresh(session)
 
         # Get opening question
-        opening = get_opening_message(req.project_id, req.interview_type, req.difficulty)
+        opening = get_opening_message(req.project_id, req.interview_type, req.difficulty, req.target_company)
 
         # Save opening message
         msg = InterviewMessage(
@@ -65,6 +68,7 @@ def start_interview(req: StartRequest):
             "project_id": req.project_id,
             "interview_type": req.interview_type,
             "difficulty": req.difficulty,
+            "target_company": req.target_company,
             "opening_message": opening,
         }
     finally:
@@ -93,6 +97,7 @@ def submit_answer(req: AnswerRequest):
             project_id=session.project_id,
             interview_type=session.interview_type,
             difficulty=session.difficulty,
+            target_company=session.target_company or "",
         )
         return result
     finally:
@@ -104,6 +109,130 @@ def finish_interview(session_id: int):
     """Complete the interview and get final score + feedback."""
     result = complete_interview(session_id)
     return result
+
+
+@router.get("/answers/{project_id}")
+def get_answer_library(project_id: str):
+    """Get all saved candidate answers with their evaluations, sorted by score."""
+    db = SessionLocal()
+    try:
+        # Get all completed sessions for this project
+        sessions = db.query(InterviewSession).filter(
+            InterviewSession.project_id == project_id,
+            InterviewSession.status == "completed"
+        ).all()
+        session_ids = [s.id for s in sessions]
+
+        if not session_ids:
+            return {"answers": []}
+
+        # Get all candidate messages with evaluations
+        messages = db.query(InterviewMessage).filter(
+            InterviewMessage.session_id.in_(session_ids),
+            InterviewMessage.role == "candidate",
+            InterviewMessage.evaluation != "",
+            InterviewMessage.evaluation != "{}",
+        ).order_by(InterviewMessage.created_at.desc()).all()
+
+        answers = []
+        for msg in messages:
+            try:
+                eval_data = json.loads(msg.evaluation) if msg.evaluation else {}
+                if not eval_data.get("score"):
+                    continue
+                # Get the question (previous interviewer message)
+                prev = db.query(InterviewMessage).filter(
+                    InterviewMessage.session_id == msg.session_id,
+                    InterviewMessage.role == "interviewer",
+                    InterviewMessage.id < msg.id,
+                ).order_by(InterviewMessage.id.desc()).first()
+
+                session = next((s for s in sessions if s.id == msg.session_id), None)
+                answers.append({
+                    "id": msg.id,
+                    "question": prev.content if prev else "",
+                    "answer": msg.content,
+                    "score": eval_data.get("score", 0),
+                    "strengths": eval_data.get("strengths", []),
+                    "weaknesses": eval_data.get("weaknesses", []),
+                    "ideal_answer": eval_data.get("ideal_answer", ""),
+                    "tip": eval_data.get("tip", ""),
+                    "interview_type": session.interview_type if session else "",
+                    "created_at": msg.created_at.isoformat(),
+                })
+            except Exception:
+                continue
+
+        answers.sort(key=lambda x: x["score"], reverse=True)
+        return {"answers": answers}
+    finally:
+        db.close()
+
+
+@router.get("/weak-spots/{project_id}")
+def get_weak_spots(project_id: str):
+    """Analyze all interview sessions to find consistent weak areas."""
+    db = SessionLocal()
+    try:
+        sessions = db.query(InterviewSession).filter(
+            InterviewSession.project_id == project_id,
+            InterviewSession.status == "completed"
+        ).all()
+
+        if not sessions:
+            return {"weak_spots": [], "message": "Complete at least one interview session to see weak spots."}
+
+        session_ids = [s.id for s in sessions]
+        messages = db.query(InterviewMessage).filter(
+            InterviewMessage.session_id.in_(session_ids),
+            InterviewMessage.role == "candidate",
+        ).all()
+
+        # Collect scores by interview type
+        type_scores: dict = {}
+        for msg in messages:
+            try:
+                if not msg.evaluation:
+                    continue
+                eval_data = json.loads(msg.evaluation)
+                score = eval_data.get("score", 0)
+                if not score:
+                    continue
+                session = next((s for s in sessions if s.id == msg.session_id), None)
+                if not session:
+                    continue
+                itype = session.interview_type
+                if itype not in type_scores:
+                    type_scores[itype] = []
+                type_scores[itype].append({
+                    "score": score,
+                    "weaknesses": eval_data.get("weaknesses", []),
+                })
+            except Exception:
+                continue
+
+        weak_spots = []
+        for itype, scores in type_scores.items():
+            avg = sum(s["score"] for s in scores) / len(scores)
+            all_weaknesses = [w for s in scores for w in s["weaknesses"]]
+
+            # Find most common weakness themes
+            from collections import Counter
+            weakness_counts = Counter(all_weaknesses)
+            top_weaknesses = [w for w, _ in weakness_counts.most_common(3)]
+
+            weak_spots.append({
+                "interview_type": itype,
+                "avg_score": round(avg),
+                "sessions_count": len(scores),
+                "top_weaknesses": top_weaknesses,
+                "needs_work": avg < 70,
+            })
+
+        weak_spots.sort(key=lambda x: x["avg_score"])
+        return {"weak_spots": weak_spots}
+    finally:
+        db.close()
 
 
 @router.get("/sessions/{project_id}")

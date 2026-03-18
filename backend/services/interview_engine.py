@@ -24,6 +24,29 @@ failure modes, scaling limits, and what they'd do differently. Never let a vague
 slide. Be direct but professional."""
 }
 
+COMPANY_STYLES = {
+    "stripe": "Stripe interviews focus heavily on systems thinking, API design, and handling edge cases at scale. They value clear communication and expect candidates to think about error handling, idempotency, and developer experience.",
+    "google": "Google values algorithmic thinking, scalability, and structured communication. Expect follow-ups on time complexity, system design tradeoffs, and how you'd handle 1000x scale.",
+    "meta": "Meta focuses on impact, velocity, and cross-functional collaboration. They want to hear about measurable outcomes and how you moved fast while maintaining quality.",
+    "amazon": "Amazon uses the STAR format strictly. They tie everything back to their Leadership Principles. Expect questions about customer obsession, ownership, and delivering results.",
+    "apple": "Apple values craftsmanship, attention to detail, and deep technical expertise. They want to understand your design decisions and why you chose one approach over another.",
+    "airbnb": "Airbnb values trust, belonging, and thoughtful product thinking. They expect candidates to show empathy for users and think about accessibility and edge cases.",
+    "netflix": "Netflix values autonomy, context over control, and high performance. They want people who can make decisions independently and communicate their reasoning clearly.",
+    "startup": "Startup interviews are fast-paced. They want generalists who can ship quickly, wear multiple hats, and think about business impact alongside technical quality.",
+    "default": ""
+}
+
+
+def get_company_style(company: str) -> str:
+    if not company:
+        return ""
+    company_lower = company.lower()
+    for key, style in COMPANY_STYLES.items():
+        if key in company_lower:
+            return f"\n\nCompany context: {style}"
+    return f"\n\nYou are interviewing for {company}. Tailor your questions to what this company likely values."
+
+
 TYPE_OPENERS = {
     "behavioral": "Tell me about yourself and this project. What problem were you solving and why did it matter?",
     "technical": "Walk me through the architecture of this project. Start from the highest level and go deeper as I ask questions.",
@@ -50,7 +73,7 @@ Push them to think about failure modes and bottlenecks."""
 }
 
 
-def get_opening_message(project_id: str, interview_type: str, difficulty: str) -> str:
+def get_opening_message(project_id: str, interview_type: str, difficulty: str, target_company: str = "") -> str:
     db = SessionLocal()
     try:
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -58,12 +81,13 @@ def get_opening_message(project_id: str, interview_type: str, difficulty: str) -
             return TYPE_OPENERS[interview_type]
 
         build_context = f"\n\nProject context: {project.build_summary[:1000]}" if project.build_summary else ""
+        company_style = get_company_style(target_company)
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=300,
             system=f"""{DIFFICULTY_PERSONAS[difficulty]}
-{TYPE_SYSTEM_PROMPTS[interview_type]}
+{TYPE_SYSTEM_PROMPTS[interview_type]}{company_style}
 
 Project: {project.name} for {project.company}
 Stack: {project.stack}{build_context}
@@ -84,8 +108,8 @@ def evaluate_answer(question: str, answer: str, project_context: str, interview_
     try:
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=500,
-            messages=[{"role": "user", "content": f"""Evaluate this interview answer briefly.
+            max_tokens=800,
+            messages=[{"role": "user", "content": f"""Evaluate this interview answer.
 
 Interview type: {interview_type}
 Difficulty: {difficulty}
@@ -97,15 +121,16 @@ Candidate answer: {answer}
 Respond with JSON only:
 {{
   "score": 0-100,
-  "strengths": ["what they did well"],
-  "weaknesses": ["what was missing or weak"],
-  "tip": "one specific improvement tip in one sentence"
+  "strengths": ["what they did well - be specific"],
+  "weaknesses": ["what was missing or weak - be specific"],
+  "tip": "one specific improvement tip",
+  "ideal_answer": "A 3-5 sentence example of what a strong answer would sound like for this specific question and project"
 }}"""}]
         )
         text = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(text)
     except Exception:
-        return {"score": 50, "strengths": [], "weaknesses": [], "tip": "Keep practicing."}
+        return {"score": 50, "strengths": [], "weaknesses": [], "tip": "Keep practicing.", "ideal_answer": ""}
 
 
 def get_next_question(
@@ -113,7 +138,8 @@ def get_next_question(
     candidate_answer: str,
     project_id: str,
     interview_type: str,
-    difficulty: str
+    difficulty: str,
+    target_company: str = ""
 ) -> dict:
     """Process candidate answer and return next interviewer message."""
     db = SessionLocal()
@@ -121,6 +147,7 @@ def get_next_question(
         project = db.query(Project).filter(Project.id == project_id).first()
         build_context = project.build_summary[:1500] if project and project.build_summary else ""
         project_info = f"{project.name} ({project.company}) - {project.stack}" if project else project_id
+        company_style = get_company_style(target_company)
 
         # Get conversation history
         messages = db.query(InterviewMessage).filter(
@@ -148,7 +175,7 @@ def get_next_question(
             model="claude-sonnet-4-20250514",
             max_tokens=400,
             system=f"""{DIFFICULTY_PERSONAS[difficulty]}
-{TYPE_SYSTEM_PROMPTS[interview_type]}
+{TYPE_SYSTEM_PROMPTS[interview_type]}{company_style}
 
 Project: {project_info}
 Build context: {build_context}

@@ -161,12 +161,20 @@ export const api = {
     })
     return r.json()
   },
-  async startInterview(project_id: string, interview_type: string, difficulty: string) {
+  async startInterview(project_id: string, interview_type: string, difficulty: string, target_company: string = '') {
     const r = await fetch(`${API}/api/interview/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id, interview_type, difficulty }),
+      body: JSON.stringify({ project_id, interview_type, difficulty, target_company }),
     })
+    return r.json()
+  },
+  async getAnswerLibrary(project_id: string) {
+    const r = await fetch(`${API}/api/interview/answers/${project_id}`, { cache: 'no-store' })
+    return r.json()
+  },
+  async getWeakSpots(project_id: string) {
+    const r = await fetch(`${API}/api/interview/weak-spots/${project_id}`, { cache: 'no-store' })
     return r.json()
   },
   async submitAnswer(session_id: number, answer: string) {
