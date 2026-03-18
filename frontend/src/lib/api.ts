@@ -35,11 +35,11 @@ export interface QuizQuestion {
 
 export const api = {
   async getProjects(): Promise<Project[]> {
-    const r = await fetch(`${API}/api/projects`, { cache: 'no-store' })
+    const r = await fetch(`${API}/api/projects?t=${Date.now()}`, { cache: 'no-store' })
     return r.json()
   },
   async getProject(id: string): Promise<Project> {
-    const r = await fetch(`${API}/api/projects/${id}`, { cache: 'no-store' })
+    const r = await fetch(`${API}/api/projects/${id}?t=${Date.now()}`, { cache: 'no-store' })
     return r.json()
   },
   async updateProject(id: string, data: Partial<Project>) {
