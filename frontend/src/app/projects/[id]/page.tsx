@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { api, Project } from '@/lib/api'
@@ -11,6 +11,132 @@ const LOG_COLORS: Record<string, string> = {
   warning: 'var(--amber)',
   success: 'var(--green)',
   info: 'var(--muted)',
+}
+
+/** Inline markdown-ish formatting for build log message bodies (no external lib). */
+function renderLogMessageBody(content: string): ReactNode[] {
+  const lines = content.split('\n')
+  return lines.map((line, i) => {
+    const trimmedEnd = line.trimEnd()
+    if (trimmedEnd === '') {
+      return <div key={i} style={{ height: 10 }} aria-hidden />
+    }
+    const t = trimmedEnd.trimStart()
+    if (t.startsWith('### ')) {
+      return (
+        <div key={i} style={{ fontWeight: 700, fontSize: 12, color: 'var(--text)', marginTop: i > 0 ? 8 : 0, marginBottom: 4, letterSpacing: 0.3 }}>
+          {t.slice(4)}
+        </div>
+      )
+    }
+    if (t.startsWith('## ')) {
+      return (
+        <div key={i} style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginTop: i > 0 ? 10 : 0, marginBottom: 4, letterSpacing: 0.3 }}>
+          {t.slice(3)}
+        </div>
+      )
+    }
+    if (t.startsWith('# ')) {
+      return (
+        <div key={i} style={{ fontWeight: 700, fontSize: 16, color: 'var(--text)', marginTop: i > 0 ? 12 : 0, marginBottom: 6, letterSpacing: 0.3 }}>
+          {t.slice(2)}
+        </div>
+      )
+    }
+    const bulletMatch = trimmedEnd.match(/^(\s*)([-*])\s+(.*)$/)
+    if (bulletMatch) {
+      return (
+        <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', paddingLeft: 2, fontSize: 12, color: 'var(--text)', lineHeight: 1.65, marginTop: 2 }}>
+          <span style={{ color: 'var(--amber)', flexShrink: 0, fontWeight: 700 }}>›</span>
+          <span style={{ color: 'var(--text)' }}>{bulletMatch[3]}</span>
+        </div>
+      )
+    }
+    const pipeParts = t.split('|').map(s => s.trim())
+    const isTableRow = t.includes('|') && pipeParts.filter(Boolean).length >= 2
+    if (isTableRow) {
+      return (
+        <div
+          key={i}
+          style={{
+            fontFamily: 'monospace',
+            fontSize: 11,
+            color: 'var(--text)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            padding: '6px 8px',
+            marginTop: 2,
+            background: 'rgba(0,0,0,0.25)',
+            borderRadius: 4,
+            border: '1px solid rgba(255,255,255,0.06)',
+            lineHeight: 1.5,
+          }}
+        >
+          {trimmedEnd}
+        </div>
+      )
+    }
+    return (
+      <div key={i} style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.65, marginTop: 2 }}>
+        {trimmedEnd}
+      </div>
+    )
+  })
+}
+
+function BuildLogCard({
+  entry,
+  phaseOverride,
+  showLevel = false,
+}: {
+  entry: { id?: string; message?: string; level?: string; phase?: string; created_at?: string }
+  phaseOverride?: string
+  showLevel?: boolean
+}) {
+  const phaseRaw = (phaseOverride ?? entry.phase ?? 'log').toString()
+  const phaseBadge = phaseRaw.toUpperCase()
+  const level = entry.level || 'info'
+  const accent =
+    level === 'error' ? 'var(--red)' : level === 'warning' ? 'var(--amber)' : level === 'success' ? 'var(--green)' : 'var(--border)'
+  const time = entry.created_at ? new Date(entry.created_at).toLocaleTimeString() : ''
+  return (
+    <div
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 10,
+        padding: '14px 16px',
+        borderLeft: `3px solid ${accent}`,
+        boxShadow: '0 1px 0 rgba(0,0,0,0.2)',
+      }}
+    >
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: 1.2,
+            textTransform: 'uppercase',
+            padding: '4px 10px',
+            borderRadius: 6,
+            background: 'rgba(56,139,221,0.12)',
+            color: 'var(--blue)',
+            border: '1px solid rgba(56,139,221,0.35)',
+            fontFamily: 'monospace',
+          }}
+        >
+          {phaseBadge}
+        </span>
+        {showLevel && (
+          <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: LOG_COLORS[level] || 'var(--muted)', fontFamily: 'monospace' }}>
+            {level}
+          </span>
+        )}
+        {time && <span style={{ fontSize: 10, color: 'var(--border)', fontFamily: 'monospace', marginLeft: 'auto' }}>{time}</span>}
+      </div>
+      <div>{renderLogMessageBody(String(entry.message ?? ''))}</div>
+    </div>
+  )
 }
 
 export default function ProjectDetail() {
@@ -490,19 +616,22 @@ export default function ProjectDetail() {
                         <div style={{
                           background: 'var(--bg)', border: '1px solid var(--border)',
                           borderTop: 'none', borderRadius: '0 0 8px 8px',
-                          fontFamily: 'monospace', fontSize: 11, lineHeight: 1.8,
-                          maxHeight: 400, overflowY: 'auto', padding: '8px 14px',
+                          maxHeight: 'min(70vh, 560px)', overflowY: 'auto', padding: '16px',
+                          display: 'flex', flexDirection: 'column', gap: 0,
                         }}>
                           {filteredEntries.map((entry: any, i: number) => (
-                            <div key={entry.id || i} style={{
-                              display: 'flex', gap: 10, padding: '2px 0',
-                              borderBottom: '1px solid rgba(255,255,255,0.02)',
-                              color: LOG_COLORS[entry.level] || 'var(--text)',
-                            }}>
-                              <span style={{ color: 'var(--border)', flexShrink: 0, fontSize: 10 }}>
-                                {new Date(entry.created_at).toLocaleTimeString()}
-                              </span>
-                              <span style={{ wordBreak: 'break-word' }}>{entry.message}</span>
+                            <div key={entry.id || i}>
+                              {i > 0 && (
+                                <div
+                                  style={{
+                                    height: 1,
+                                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent)',
+                                    margin: '18px 0',
+                                  }}
+                                  aria-hidden
+                                />
+                              )}
+                              <BuildLogCard entry={entry} phaseOverride={group.phase} />
                             </div>
                           ))}
                         </div>
@@ -515,35 +644,41 @@ export default function ProjectDetail() {
 
           {/* Flat view */}
           {logView === 'flat' && (
-            <div ref={logsContainerRef} onScroll={handleScroll} style={{
-              fontFamily: 'monospace', fontSize: 12, background: 'var(--surface)',
-              borderRadius: 8, padding: 16, border: '1px solid var(--border)',
-              lineHeight: 1.8, height: 'calc(100vh - 320px)', overflowY: 'auto',
-            }}>
+            <div
+              ref={logsContainerRef}
+              onScroll={handleScroll}
+              style={{
+                background: 'var(--bg)',
+                borderRadius: 10,
+                padding: 16,
+                border: '1px solid var(--border)',
+                height: 'calc(100vh - 320px)',
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0,
+              }}
+            >
               {logs.length === 0 && (
-                <div style={{ color: 'var(--muted)' }}>
-                  No logs yet. Click "↓ Import logs" to load agent logs from disk.
+                <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+                  No logs yet. Click &quot;↓ Import logs&quot; to load agent logs from disk.
                 </div>
               )}
               {logs
                 .filter(l => !logSearch || l.message.toLowerCase().includes(logSearch.toLowerCase()))
                 .map((l: any, i: number) => (
-                  <div key={l.id || i} style={{
-                    display: 'flex', gap: 12, padding: '1px 0',
-                    borderBottom: '1px solid rgba(255,255,255,0.02)',
-                  }}>
-                    <span style={{ color: 'var(--border)', flexShrink: 0, fontSize: 10 }}>
-                      {new Date(l.created_at).toLocaleTimeString()}
-                    </span>
-                    <span style={{ color: 'var(--border)', flexShrink: 0, fontSize: 10, minWidth: 50, textTransform: 'uppercase' }}>
-                      [{l.level}]
-                    </span>
-                    {l.phase && (
-                      <span style={{ color: 'var(--blue)', flexShrink: 0, fontSize: 10 }}>[{l.phase}]</span>
+                  <div key={l.id || i}>
+                    {i > 0 && (
+                      <div
+                        style={{
+                          height: 1,
+                          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent)',
+                          margin: '18px 0',
+                        }}
+                        aria-hidden
+                      />
                     )}
-                    <span style={{ color: LOG_COLORS[l.level] || 'var(--text)', wordBreak: 'break-word' }}>
-                      {l.message}
-                    </span>
+                    <BuildLogCard entry={l} showLevel />
                   </div>
                 ))}
               <div ref={logsEndRef} />
