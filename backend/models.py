@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Integer, DateTime, Text, Enum as SAEnum, create_engine, text, inspect
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timezone
@@ -153,6 +154,20 @@ class StudyTimer(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class CodeChunk(Base):
+    __tablename__ = "code_chunks"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String, nullable=False, index=True)
+    file_path = Column(String, nullable=False)
+    chunk_index = Column(Integer, default=0)
+    content = Column(Text, nullable=False)
+    chunk_type = Column(String, default="code")  # code, comment, docstring, function, class
+    start_line = Column(Integer, default=0)
+    end_line = Column(Integer, default=0)
+    embedding = Column(Vector(384))  # all-MiniLM-L6-v2 outputs 384 dims
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -195,3 +210,8 @@ def create_tables():
 
     # Create new study tables if they don't exist
     Base.metadata.create_all(bind=engine)
+
+    # Enable pgvector extension
+    with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.commit()

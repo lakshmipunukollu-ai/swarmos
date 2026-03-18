@@ -239,8 +239,8 @@ def import_from_github(req: GitHubImportRequest, db: Session = Depends(get_db)):
 
     # Fetch file contents
     collected_content = []
+    collected_content_map = []  # {path, content} for RAG
     for file_info in top_files:
-        # Use contents API to get download URL
         try:
             file_data = github_get(f"repos/{owner}/{repo}/contents/{urllib.parse.quote(file_info['path'])}")
             download_url = file_data.get("download_url", "")
@@ -248,6 +248,7 @@ def import_from_github(req: GitHubImportRequest, db: Session = Depends(get_db)):
                 content = fetch_file_content(download_url)
                 if content and len(content) > 50:
                     collected_content.append(f"=== {file_info['path']} ===\n{content}")
+                    collected_content_map.append({"path": file_info["path"], "content": content})
                     if len("\n\n".join(collected_content)) > 15000:
                         break
         except Exception:
@@ -319,6 +320,15 @@ Format as markdown."""}]
     db.add(project)
     db.commit()
     db.refresh(project)
+
+    # Index files for RAG
+    try:
+        from services.rag_engine import index_project_files
+        files_for_rag = {item["path"]: item.get("content", "") for item in collected_content_map}
+        chunk_count = index_project_files(project.id, files_for_rag, db)
+        print(f"Indexed {chunk_count} chunks for {project.id}")
+    except Exception as e:
+        print(f"RAG indexing failed (non-fatal): {e}")
 
     return {
         **project_to_dict(project),
@@ -583,6 +593,68 @@ def get_project(project_id: str, db: Session = Depends(get_db)):
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")
     return project_to_dict(p)
+
+
+@router.get("/{project_id}/rag-status")
+def get_rag_status(project_id: str, db: Session = Depends(get_db)):
+    """Returns how many chunks are indexed for this project."""
+    from models import CodeChunk
+    count = db.query(CodeChunk).filter(CodeChunk.project_id == project_id).count()
+    return {
+        "project_id": project_id,
+        "chunks_indexed": count,
+        "has_rag": count > 0,
+    }
+
+
+@router.post("/{project_id}/index-rag")
+def index_project_rag(project_id: str, db: Session = Depends(get_db)):
+    """
+    Manually trigger RAG indexing for a project.
+    Reads files from SWARM_PROJECTS_DIR and indexes them.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+    from services.rag_engine import index_project_files
+
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+
+    projects_dir = _os.getenv("SWARM_PROJECTS_DIR", _os.path.expanduser("~/gauntlet-swarm/projects"))
+    project_dir = _Path(projects_dir) / project_id
+
+    SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", "__pycache__", ".venv"}
+    IMPORTANT_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java"}
+
+    files = {}
+    if project_dir.exists():
+        for f in project_dir.rglob("*"):
+            if f.is_file():
+                if any(skip in f.parts for skip in SKIP_DIRS):
+                    continue
+                ext = f.suffix.lower()
+                if ext in IMPORTANT_EXTS:
+                    try:
+                        content = f.read_text(errors="replace")
+                        rel_path = str(f.relative_to(project_dir))
+                        files[rel_path] = content
+                    except Exception:
+                        continue
+
+    if not files:
+        # Fall back to build summary if no files found
+        if p.build_summary:
+            files["build_summary.md"] = p.build_summary
+        else:
+            return {"indexed": 0, "message": "No files found to index"}
+
+    chunk_count = index_project_files(project_id, files, db)
+    return {
+        "indexed": chunk_count,
+        "files_processed": len(files),
+        "message": f"Indexed {chunk_count} chunks from {len(files)} files"
+    }
 
 
 @router.post("/{project_id}/study-session")

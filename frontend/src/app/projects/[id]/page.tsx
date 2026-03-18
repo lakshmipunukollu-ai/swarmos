@@ -48,6 +48,8 @@ export default function ProjectDetail() {
   const [feynmanLoading, setFeynmanLoading] = useState(false)
   const [aiDefense, setAiDefense] = useState<any>(null)
   const [prepSection, setPrepSection] = useState<'pitch' | 'why' | 'feynman' | 'defense'>('pitch')
+  const [ragStatus, setRagStatus] = useState<any>(null)
+  const [indexingRAG, setIndexingRAG] = useState(false)
 
   const load = useCallback(async () => {
     const [p, l, gl] = await Promise.all([
@@ -61,6 +63,7 @@ export default function ProjectDetail() {
     setLoading(false)
     api.getReadinessScore(id).then(setReadiness).catch(() => {})
     api.getStudyHistory(id).then(setStudyHistory).catch(() => {})
+    api.getRAGChunkCount(id).then(setRagStatus).catch(() => {})
   }, [id])
 
   useEffect(() => {
@@ -232,6 +235,25 @@ export default function ProjectDetail() {
             color: refreshing ? 'var(--bg)' : 'var(--muted)',
           }}>
             {refreshing ? 'Refreshing...' : '↻ Refresh'}
+          </button>
+          <button onClick={async () => {
+            setIndexingRAG(true)
+            try {
+              const result = await api.indexProjectRAG(id)
+              setRagStatus({ chunks_indexed: result.indexed, has_rag: result.indexed > 0 })
+              alert(`Indexed ${result.indexed} code chunks for smarter questions`)
+            } finally {
+              setIndexingRAG(false)
+            }
+          }} disabled={indexingRAG} style={{
+            padding: '7px 14px', fontSize: 11, borderRadius: 6,
+            border: `1px solid ${ragStatus?.has_rag ? 'var(--green)' : 'var(--border)'}`,
+            background: 'transparent',
+            color: ragStatus?.has_rag ? 'var(--green)' : 'var(--muted)',
+            cursor: indexingRAG ? 'not-allowed' : 'pointer',
+            fontFamily: 'monospace',
+          }}>
+            {indexingRAG ? 'Indexing...' : ragStatus?.has_rag ? `⚡ ${ragStatus.chunks_indexed} chunks` : '⚡ Index for RAG'}
           </button>
         </div>
       </div>

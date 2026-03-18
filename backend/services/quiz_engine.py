@@ -33,6 +33,20 @@ def generate_questions(project_id: str, question_type: str, level: int, count: i
         build_summary = project.build_summary or ""
         summary_section = f"\n\nBUILD SUMMARY (actual code written):\n{build_summary[:3000]}" if build_summary else ""
 
+        # Try to get RAG context for better questions
+        rag_context = ""
+        try:
+            from services.rag_engine import get_rag_context
+            query = f"{question_type} {project.stack} {project.name}"
+            rag_context = get_rag_context(project_id, query, db, top_k=5)
+        except Exception as e:
+            print(f"RAG context failed (non-fatal): {e}")
+
+        if rag_context:
+            rag_section = f"\n\nRELEVANT CODE CHUNKS (use these to generate specific, grounded questions):\n{rag_context}"
+        else:
+            rag_section = ""
+
         existing_questions = db.query(QuizQuestion).filter(
             QuizQuestion.project_id == project_id,
             QuizQuestion.question_type == question_type,
@@ -64,7 +78,7 @@ Questions should BUILD on each other — each question assumes the engineer unde
 PROJECT: {project.name}
 COMPANY: {project.company}
 STACK: {project.stack}
-PORT: {project.port}{summary_section}
+PORT: {project.port}{summary_section}{rag_section}
 
 SCAFFOLDING LEVEL {level}: {scaffold_instructions}
 QUESTION TYPE: {TYPE_PROMPTS[question_type]}

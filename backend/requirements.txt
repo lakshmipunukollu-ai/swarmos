@@ -9,3 +9,5 @@ anthropic==0.40.0
 python-dotenv==1.0.0
 httpx==0.25.2
 sse-starlette==1.6.5
+sentence-transformers==2.7.0
+pgvector==0.3.6
