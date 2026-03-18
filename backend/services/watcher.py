@@ -60,10 +60,6 @@ def sync_project_status():
                 continue
 
             agent_status = get_agent_status(project_path)
-            # Only update live_url if current one is NOT a known frontend URL
-            agent_live_url = agent_status.get("live_url", "")
-            if agent_live_url and not is_frontend_url(project.live_url or ""):
-                project.live_url = agent_live_url
             files_count = count_files(project_path)
             all_lines = get_all_log_lines(project_path)
             last_log = all_lines[-1] if all_lines else ""
