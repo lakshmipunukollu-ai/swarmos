@@ -1,5 +1,4 @@
 from sqlalchemy import Column, String, Integer, DateTime, Text, Enum as SAEnum, create_engine, text, inspect
-from pgvector.sqlalchemy import Vector
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timezone
@@ -154,28 +153,6 @@ class StudyTimer(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
-class CodeChunk(Base):
-    __tablename__ = "code_chunks"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    project_id = Column(String, nullable=False, index=True)
-    file_path = Column(String, nullable=False)
-    chunk_index = Column(Integer, default=0)
-    content = Column(Text, nullable=False)
-    chunk_type = Column(String, default="code")  # code, comment, docstring, function, class
-    start_line = Column(Integer, default=0)
-    end_line = Column(Integer, default=0)
-    embedding = Column(Vector(384))  # all-MiniLM-L6-v2 outputs 384 dims
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
 def create_tables():
     Base.metadata.create_all(bind=engine)
     insp = inspect(engine)
@@ -184,29 +161,29 @@ def create_tables():
     if "brief" not in [c["name"] for c in insp.get_columns("projects")]:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE projects ADD COLUMN brief TEXT DEFAULT ''"))
-            conn.commit()
+    
 
     if "featured" not in [c["name"] for c in insp.get_columns("projects")]:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE projects ADD COLUMN featured INTEGER DEFAULT 0"))
-            conn.commit()
+    
 
     # Add wrong_answers to quiz_questions if missing
     if "wrong_answers" not in [c["name"] for c in insp.get_columns("quiz_questions")]:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE quiz_questions ADD COLUMN wrong_answers TEXT DEFAULT '[]'"))
-            conn.commit()
+    
 
     if "hiring_notes" not in [c["name"] for c in insp.get_columns("projects")]:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE projects ADD COLUMN hiring_notes TEXT DEFAULT ''"))
-            conn.commit()
+    
 
     # Add target_company to interview_sessions if missing
     if "interview_sessions" in insp.get_table_names() and "target_company" not in [c["name"] for c in insp.get_columns("interview_sessions")]:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN target_company TEXT DEFAULT ''"))
-            conn.commit()
+    
 
     # Create new study tables if they don't exist
     Base.metadata.create_all(bind=engine)
@@ -214,4 +191,10 @@ def create_tables():
     # Enable pgvector extension
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        conn.commit()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

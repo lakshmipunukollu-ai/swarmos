@@ -419,7 +419,7 @@ def get_study_overview(db: Session = Depends(get_db)):
 
     # This week
     week_start = datetime.now(timezone.utc) - timedelta(days=7)
-    week_timers = [t for t in timers if t.created_at >= week_start]
+    week_timers = [t for t in timers if t.created_at.replace(tzinfo=None) >= week_start.replace(tzinfo=None)]
     week_seconds = sum(t.duration_seconds for t in week_timers)
 
     return {

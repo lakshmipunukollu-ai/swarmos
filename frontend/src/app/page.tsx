@@ -148,8 +148,6 @@ export default function Dashboard() {
     try {
       const data = await api.getProjects()
       setProjects(data)
-      api.getDueForReview().then(data => setDueReviews(data.due || [])).catch(() => {})
-      api.getStudyOverview().then(setStudyOverview).catch(() => {})
     } finally {
       setLoading(false)
     }
@@ -175,6 +173,17 @@ export default function Dashboard() {
     const interval = setInterval(loadProjects, 8000)
     return () => clearInterval(interval)
   }, [loadProjects])
+
+  // Load study stats in background after initial render so they don't block project cards
+  useEffect(() => {
+    const loadStats = () => {
+      api.getDueForReview().then(data => setDueReviews(data.due || [])).catch(() => {})
+      api.getStudyOverview().then(setStudyOverview).catch(() => {})
+    }
+    loadStats()
+    const interval = setInterval(loadStats, 8000)
+    return () => clearInterval(interval)
+  }, [])
 
   const filtered = filter === 'all' ? projects : projects.filter(p => p.status === filter)
   const sortedProjects = [...filtered].sort((a, b) => (b.featured || 0) - (a.featured || 0))
