@@ -301,3 +301,95 @@ Be direct and specific. This is coaching feedback."""}]
         return {"score": 0, "feedback": str(e)}
     finally:
         db.close()
+
+
+def get_defend_question(project_id: str, file_path: str, code_snippet: str, question_focus: str) -> dict:
+    """
+    Generates a 'defend your code' question about a specific function or section.
+    question_focus: what, why, change, weakness
+    """
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        project_name = project.name if project else project_id
+        stack = project.stack if project else ""
+    finally:
+        db.close()
+
+    focus_prompts = {
+        "what": "Ask them to explain what this code does in plain English. Ask them to walk through it line by line.",
+        "why": "Ask them WHY they wrote it this way. Push them on tradeoffs — why this approach vs alternatives?",
+        "change": "Ask what they would change or improve about this code now that they've had time to reflect.",
+        "weakness": "Identify a real weakness, edge case, or potential bug in this code and ask them about it.",
+    }
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            messages=[{"role": "user", "content": f"""You are a technical interviewer reviewing a candidate's code.
+
+Project: {project_name}
+Stack: {stack}
+File: {file_path}
+
+Code to review:
+{code_snippet[:1500]}
+
+Generate ONE focused interview question about this code.
+Focus: {focus_prompts[question_focus]}
+
+Also provide what a strong answer would cover.
+
+Respond with JSON only:
+{{
+  "question": "the interview question",
+  "what_to_cover": ["key point 1", "key point 2", "key point 3"],
+  "follow_up": "a follow-up question if their answer is vague"
+}}"""}]
+        )
+        text = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        result = json.loads(text)
+        return result
+    except Exception as e:
+        return {"question": f"Walk me through this code and explain your decisions.", "what_to_cover": [], "follow_up": ""}
+
+
+def evaluate_defense(question: str, code_snippet: str, candidate_answer: str, project_id: str) -> dict:
+    """Evaluates a candidate's defense of their code."""
+    db = SessionLocal()
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        stack = project.stack if project else ""
+    finally:
+        db.close()
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=600,
+            messages=[{"role": "user", "content": f"""Evaluate this candidate's defense of their code.
+
+Stack: {stack}
+Code:
+{code_snippet[:800]}
+
+Question: {question}
+Answer: {candidate_answer}
+
+Score their answer on: technical accuracy, clarity of explanation, awareness of tradeoffs.
+
+Respond with JSON only:
+{{
+  "score": 0-100,
+  "verdict": "strong|acceptable|weak",
+  "what_they_got_right": ["specific correct point"],
+  "what_they_missed": ["important thing they didn't mention"],
+  "ideal_points": ["what a strong answer would have covered"],
+  "coaching_tip": "one specific thing to improve"
+}}"""}]
+        )
+        text = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(text)
+    except Exception as e:
+        return {"score": 50, "verdict": "acceptable", "what_they_got_right": [], "what_they_missed": [], "ideal_points": [], "coaching_tip": "Keep practicing."}

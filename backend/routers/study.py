@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -100,3 +101,63 @@ def get_questions(session_id: int):
 @router.post("/attempt")
 def submit_attempt(req: AttemptRequest):
     return record_study_attempt(req.question_id, req.is_correct)
+
+
+class BraindumpRequest(BaseModel):
+    project_id: str
+    recall_text: str
+
+
+@router.post("/braindump")
+def check_braindump(req: BraindumpRequest):
+    """
+    Compares a candidate's brain dump against the project's build summary.
+    Returns what they remembered, what they forgot, and feedback.
+    """
+    import anthropic as _anthropic
+    import os as _os
+
+    db = SessionLocal()
+    try:
+        from models import Project
+        project = db.query(Project).filter(Project.id == req.project_id).first()
+        if not project:
+            raise HTTPException(404, "Project not found")
+        if not project.build_summary:
+            raise HTTPException(400, "No build summary for this project. Run Refresh first.")
+
+        ai_client = _anthropic.Anthropic(api_key=_os.getenv("ANTHROPIC_API_KEY"))
+        response = ai_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": f"""You are evaluating how well an engineer remembers their own project.
+
+PROJECT: {project.name} ({project.company})
+STACK: {project.stack}
+
+BUILD SUMMARY (ground truth):
+{project.build_summary[:3000]}
+
+CANDIDATE'S RECALL:
+{req.recall_text}
+
+Compare what they wrote against the build summary. Be specific and constructive.
+
+Respond with JSON only:
+{{
+  "score": 0-100,
+  "remembered": ["specific accurate thing they recalled correctly - be specific, reference actual details"],
+  "forgot": ["important thing from the build summary they completely missed"],
+  "inaccurate": ["something they said that was wrong or imprecise"],
+  "feedback": "2-3 sentence overall assessment. Be encouraging but honest about gaps."
+}}"""}]
+        )
+        text = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        result = json.loads(text)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Braindump check failed: {str(e)}")
+    finally:
+        db.close()

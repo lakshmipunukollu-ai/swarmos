@@ -20,11 +20,12 @@ function TimeEstimate({ project }: { project: Project }) {
   return <span style={{ color: 'var(--amber)', fontSize: 11 }}>~{mins}m left ({pct}%)</span>
 }
 
-function ProjectCard({ project, onDelete, deletingId }: { project: Project; onDelete: (id: string) => void; deletingId: string | null }) {
+function ProjectCard({ project, onDelete, deletingId, dueReviews, onToggleFeatured }: { project: Project; onDelete: (id: string) => void; deletingId: string | null; dueReviews: any[]; onToggleFeatured: (id: string) => void }) {
   const pct = project.status === 'done' ? 100
     : project.status === 'building' ? Math.min(95, Math.round((project.elapsed_seconds / (project.estimated_minutes * 60)) * 100))
     : project.status === 'testing' ? 90 : 0
 
+  const isFeatured = project.featured === 1
   const borderColor = project.status === 'building' ? 'var(--green)'
     : project.status === 'error' ? 'var(--red)'
     : project.status === 'done' ? 'rgba(0,217,126,0.3)'
@@ -34,10 +35,23 @@ function ProjectCard({ project, onDelete, deletingId }: { project: Project; onDe
     <Link href={`/projects/${project.id}`} style={{ textDecoration: 'none' }}>
       <div style={{
         position: 'relative',
-        background: 'var(--surface)', border: `1px solid ${borderColor}`,
+        background: 'var(--surface)', border: `1px solid ${isFeatured ? 'var(--amber)' : borderColor}`,
         borderRadius: 10, padding: '14px 16px', cursor: 'pointer',
         transition: 'border-color 0.2s', height: '100%',
       }}>
+        <button
+          type="button"
+          onClick={e => { e.preventDefault(); e.stopPropagation(); onToggleFeatured(project.id) }}
+          style={{
+            position: 'absolute', top: 8, left: 8,
+            background: 'transparent', border: 'none',
+            cursor: 'pointer', fontSize: 14, opacity: isFeatured ? 1 : 0.25,
+            padding: 2,
+          }}
+          title={isFeatured ? 'Unfeature project' : 'Feature project'}
+        >
+          ⭐
+        </button>
         <button
           type="button"
           onClick={e => { e.preventDefault(); e.stopPropagation(); onDelete(project.id) }}
@@ -55,7 +69,14 @@ function ProjectCard({ project, onDelete, deletingId }: { project: Project; onDe
         </button>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{project.name}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+              {project.name}
+              {dueReviews?.some((d: any) => d.id === project.id) && (
+                <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 10, background: 'rgba(245,166,35,0.15)', color: 'var(--amber)', border: '1px solid var(--amber)', marginLeft: 6 }}>
+                  REVIEW
+                </span>
+              )}
+            </div>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{project.company}</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
@@ -117,6 +138,8 @@ function ProjectCard({ project, onDelete, deletingId }: { project: Project; onDe
 
 export default function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([])
+  const [dueReviews, setDueReviews] = useState<any[]>([])
+  const [studyOverview, setStudyOverview] = useState<any>(null)
   const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -125,6 +148,8 @@ export default function Dashboard() {
     try {
       const data = await api.getProjects()
       setProjects(data)
+      api.getDueForReview().then(data => setDueReviews(data.due || [])).catch(() => {})
+      api.getStudyOverview().then(setStudyOverview).catch(() => {})
     } finally {
       setLoading(false)
     }
@@ -141,6 +166,10 @@ export default function Dashboard() {
     }
   }
 
+  const handleToggleFeatured = (id: string) => {
+    api.toggleFeatured(id).then(() => loadProjects())
+  }
+
   useEffect(() => {
     loadProjects()
     const interval = setInterval(loadProjects, 8000)
@@ -148,6 +177,7 @@ export default function Dashboard() {
   }, [loadProjects])
 
   const filtered = filter === 'all' ? projects : projects.filter(p => p.status === filter)
+  const sortedProjects = [...filtered].sort((a, b) => (b.featured || 0) - (a.featured || 0))
   const done = projects.filter(p => p.status === 'done').length
   const building = projects.filter(p => p.status === 'building' || p.status === 'testing').length
   const errors = projects.filter(p => p.status === 'error').length
@@ -160,6 +190,26 @@ export default function Dashboard() {
 
   return (
     <div style={{ width: '100%' }}>
+      {dueReviews.length > 0 && (
+        <div style={{
+          background: 'rgba(245,166,35,0.08)', border: '1px solid var(--amber)',
+          borderRadius: 8, padding: '10px 16px', marginBottom: 16,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <div>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--amber)' }}>
+              📚 {dueReviews.length} project{dueReviews.length !== 1 ? 's' : ''} due for review
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 10 }}>
+              {dueReviews.slice(0, 3).map((d: any) => d.name).join(', ')}
+              {dueReviews.length > 3 ? ` +${dueReviews.length - 3} more` : ''}
+            </span>
+          </div>
+          <a href="/quiz" style={{ fontSize: 11, color: 'var(--amber)', textDecoration: 'none', fontFamily: 'monospace', border: '1px solid var(--amber)', borderRadius: 4, padding: '4px 10px' }}>
+            Study now →
+          </a>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           {[
@@ -187,8 +237,33 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {studyOverview && (studyOverview.total_minutes_studied > 0 || studyOverview.total_questions_answered > 0) && (
+        <div style={{
+          display: 'flex', gap: 20, padding: '10px 16px',
+          background: 'var(--surface)', borderRadius: 8,
+          border: '1px solid var(--border)', marginBottom: 16,
+          alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1, flexShrink: 0 }}>Study stats</div>
+          {[
+            { label: 'Today', value: `${studyOverview.today_minutes}m` },
+            { label: 'This week', value: `${studyOverview.week_minutes}m` },
+            { label: 'Total', value: `${studyOverview.total_minutes_studied}m` },
+            { label: 'Questions', value: studyOverview.total_questions_answered },
+            { label: 'Accuracy', value: `${studyOverview.overall_accuracy}%` },
+            { label: 'Interviews', value: studyOverview.total_interview_sessions },
+            ...(studyOverview.streak_days > 0 ? [{ label: '🔥 Streak', value: `${studyOverview.streak_days}d` }] : []),
+          ].map(stat => (
+            <div key={stat.label}>
+              <div style={{ fontSize: 10, color: 'var(--muted)' }}>{stat.label}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{stat.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
-        {filtered.map(p => <ProjectCard key={p.id} project={p} onDelete={handleDelete} deletingId={deletingId} />)}
+        {sortedProjects.map(p => <ProjectCard key={p.id} project={p} onDelete={handleDelete} deletingId={deletingId} dueReviews={dueReviews} onToggleFeatured={handleToggleFeatured} />)}
       </div>
 
       {filtered.length === 0 && (

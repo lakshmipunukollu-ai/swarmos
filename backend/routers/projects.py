@@ -1,6 +1,8 @@
 import os
 import json
 import re
+import urllib.request
+import urllib.parse
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -57,6 +59,7 @@ def project_to_dict(p):
         "build_summary": p.build_summary or "",
         "hiring_notes": p.hiring_notes or "",
         "brief": p.brief or "",
+        "featured": p.featured or 0,
         "started_at": p.started_at.isoformat() if p.started_at else None,
         "completed_at": p.completed_at.isoformat() if p.completed_at else None,
         "created_at": p.created_at.isoformat() if p.created_at else None,
@@ -97,12 +100,772 @@ def create_project(data: ProjectCreate, db: Session = Depends(get_db)):
 def list_projects(db: Session = Depends(get_db)):
     return [project_to_dict(p) for p in db.query(Project).order_by(Project.created_at).all()]
 
+
+@router.post("/import-github")
+def import_from_github(req: GitHubImportRequest, db: Session = Depends(get_db)):
+    """
+    Imports a project from a public GitHub repository.
+    Fetches key source files, generates a build summary using Claude,
+    and creates a new project entry ready for quiz and interview prep.
+    """
+    import anthropic as _ant
+    import re as _re
+
+    # Parse repo URL → owner/repo
+    url = req.repo_url.rstrip("/").replace(".git", "")
+    parts = url.split("github.com/")
+    if len(parts) < 2:
+        raise HTTPException(400, "Invalid GitHub URL. Use format: https://github.com/username/repo-name")
+
+    owner_repo = parts[1].strip("/")
+    parts2 = owner_repo.split("/")
+    if len(parts2) < 2:
+        raise HTTPException(400, "Could not parse owner/repo from URL")
+
+    owner, repo = parts2[0], parts2[1]
+    project_id = f"{owner}-{repo}".lower()[:50]
+    project_id = _re.sub(r'[^a-z0-9-]', '-', project_id)
+    project_id = _re.sub(r'-+', '-', project_id).strip('-')
+
+    # Check if already exists
+    existing = db.query(Project).filter(Project.id == project_id).first()
+    if existing:
+        raise HTTPException(409, f"Project '{project_id}' already exists. Delete it first to re-import.")
+
+    # Fetch repo tree from GitHub API
+    SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", "__pycache__",
+                 ".venv", "vendor", "target", ".gradle", "coverage"}
+    IMPORTANT_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".java", ".go",
+                      ".rs", ".rb", ".cs", ".md", ".yaml", ".yml", ".toml", ".json"}
+    SKIP_FILES = {"package-lock.json", "yarn.lock", "poetry.lock", "Pipfile.lock"}
+
+    def github_get(path: str) -> dict:
+        api_url = f"https://api.github.com/{path}"
+        req_obj = urllib.request.Request(
+            api_url,
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "SwarmOS/1.0"}
+        )
+        try:
+            with urllib.request.urlopen(req_obj, timeout=10) as resp:
+                import json as _json
+                return _json.loads(resp.read().decode())
+        except Exception as e:
+            raise HTTPException(502, f"GitHub API error: {str(e)}")
+
+    def fetch_file_content(download_url: str) -> str:
+        try:
+            req_obj = urllib.request.Request(
+                download_url,
+                headers={"User-Agent": "SwarmOS/1.0"}
+            )
+            with urllib.request.urlopen(req_obj, timeout=8) as resp:
+                return resp.read().decode("utf-8", errors="replace")[:3000]
+        except Exception:
+            return ""
+
+    # Get repo info
+    try:
+        repo_info = github_get(f"repos/{owner}/{repo}")
+    except Exception:
+        raise HTTPException(404, f"Repository {owner}/{repo} not found or is private")
+
+    repo_name = repo_info.get("name", repo)
+    repo_description = repo_info.get("description", "")
+    default_branch = repo_info.get("default_branch", "main")
+    language = repo_info.get("language", "")
+    topics = repo_info.get("topics", [])
+
+    # Get file tree (recursive)
+    try:
+        tree_data = github_get(f"repos/{owner}/{repo}/git/trees/{default_branch}?recursive=1")
+    except Exception:
+        raise HTTPException(502, "Could not fetch repository file tree")
+
+    tree = tree_data.get("tree", [])
+
+    # Filter to important files
+    important_files = []
+    for item in tree:
+        if item.get("type") != "blob":
+            continue
+        path = item.get("path", "")
+        filename = path.split("/")[-1]
+
+        # Skip unwanted directories
+        path_parts = path.split("/")
+        if any(part in SKIP_DIRS for part in path_parts[:-1]):
+            continue
+
+        # Skip unwanted files
+        if filename in SKIP_FILES:
+            continue
+
+        # Check extension
+        ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        if ext not in IMPORTANT_EXTS:
+            continue
+
+        # Prioritize: README, main entry points, core logic files
+        priority = 0
+        if filename.lower() in ["readme.md", "build_summary.md", "architecture.md"]:
+            priority = 10
+        elif filename.lower() in ["main.py", "main.ts", "index.ts", "index.js", "app.py", "app.ts"]:
+            priority = 8
+        elif "model" in path.lower() or "schema" in path.lower():
+            priority = 6
+        elif "route" in path.lower() or "router" in path.lower() or "api" in path.lower():
+            priority = 5
+        elif ext in {".md", ".yaml", ".yml"}:
+            priority = 3
+        else:
+            priority = 1
+
+        important_files.append({
+            "path": path,
+            "url": item.get("url", ""),
+            "priority": priority,
+            "size": item.get("size", 0),
+        })
+
+    # Sort by priority, take top 20
+    important_files.sort(key=lambda f: (-f["priority"], f["size"]))
+    top_files = important_files[:20]
+
+    # Fetch file contents
+    collected_content = []
+    for file_info in top_files:
+        # Use contents API to get download URL
+        try:
+            file_data = github_get(f"repos/{owner}/{repo}/contents/{urllib.parse.quote(file_info['path'])}")
+            download_url = file_data.get("download_url", "")
+            if download_url:
+                content = fetch_file_content(download_url)
+                if content and len(content) > 50:
+                    collected_content.append(f"=== {file_info['path']} ===\n{content}")
+                    if len("\n\n".join(collected_content)) > 15000:
+                        break
+        except Exception:
+            continue
+
+    if not collected_content:
+        raise HTTPException(400, "Could not fetch any source files from this repository. Make sure it's public.")
+
+    combined = "\n\n".join(collected_content)
+
+    # Detect stack from language, topics, and files
+    stack_parts = []
+    if language:
+        stack_parts.append(language)
+    for topic in topics[:3]:
+        if topic not in stack_parts:
+            stack_parts.append(topic.replace("-", " ").title())
+    detected_stack = " + ".join(stack_parts) if stack_parts else "Unknown"
+
+    # Generate build summary using Claude
+    ai_client = _ant.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    try:
+        response = ai_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": f"""Analyze this GitHub repository and create a comprehensive build summary.
+
+REPO: {owner}/{repo}
+DESCRIPTION: {repo_description}
+LANGUAGE: {language}
+TOPICS: {', '.join(topics)}
+
+SOURCE FILES:
+{combined}
+
+Write a comprehensive build summary covering:
+1. What this project does and what problem it solves
+2. Architecture and key technical decisions
+3. Important files and what each does
+4. Stack and libraries used
+5. Most complex or interesting parts of the codebase
+6. What a technical interviewer would ask about this project
+
+Be specific — reference actual file names, function names, and patterns from the code.
+Format as markdown."""}]
+        )
+        build_summary = response.content[0].text.strip()
+    except Exception as e:
+        build_summary = f"# {repo_name}\n\n{repo_description}\n\nStack: {detected_stack}\n\nCould not generate full summary: {str(e)}"
+
+    # Determine company from request or repo name
+    company = req.company or owner.replace("-", " ").title()
+    brief = req.brief or repo_description or f"Imported from GitHub: {owner}/{repo}"
+
+    # Create project
+    project = Project(
+        id=project_id,
+        name=repo_name.replace("-", " ").replace("_", " ").title(),
+        company=company,
+        stack=detected_stack,
+        status=ProjectStatus.done,
+        phase="done",
+        files_count=len([f for f in tree if f.get("type") == "blob"]),
+        github_url=f"https://github.com/{owner}/{repo}",
+        build_summary=build_summary,
+        brief=brief,
+        estimated_minutes=120,
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    return {
+        **project_to_dict(project),
+        "imported": True,
+        "files_scanned": len(collected_content),
+        "message": f"Successfully imported {repo_name} from GitHub",
+    }
+
+
+@router.get("/due-for-review")
+def get_due_for_review(db: Session = Depends(get_db)):
+    """
+    Returns projects that are due for quiz review based on spaced repetition schedule.
+    Reviews are due at: 1 day, 3 days, 7 days, 14 days after last quiz attempt.
+    """
+    from datetime import timedelta
+    import json as json_lib
+
+    REVIEW_INTERVALS = [1, 3, 7, 14]  # days
+
+    projects = db.query(Project).filter(Project.status == ProjectStatus.done).all()
+    due = []
+
+    now = datetime.now(timezone.utc)
+
+    for project in projects:
+        # Get last quiz attempt for this project
+        last_attempt = db.query(QuizAttempt).filter(
+            QuizAttempt.project_id == project.id
+        ).order_by(QuizAttempt.created_at.desc()).first()
+
+        if not last_attempt:
+            # Never quizzed — due immediately
+            due.append({
+                "id": project.id,
+                "name": project.name,
+                "company": project.company,
+                "days_since_quiz": None,
+                "reason": "Never quizzed",
+                "priority": "high",
+            })
+            continue
+
+        last_date = last_attempt.created_at
+        if last_date.tzinfo is None:
+            last_date = last_date.replace(tzinfo=timezone.utc)
+
+        days_since = (now - last_date).days
+
+        # Check if due based on intervals
+        for interval in REVIEW_INTERVALS:
+            if days_since >= interval:
+                due.append({
+                    "id": project.id,
+                    "name": project.name,
+                    "company": project.company,
+                    "days_since_quiz": days_since,
+                    "reason": f"Due for {interval}-day review",
+                    "priority": "high" if days_since >= 7 else "medium",
+                })
+                break
+
+    due.sort(key=lambda x: (x["priority"] == "medium", x.get("days_since_quiz") or -1))
+    return {"due": due, "count": len(due)}
+
+
+@router.get("/study-stats/overview")
+def get_study_overview(db: Session = Depends(get_db)):
+    """Get overall study stats across all projects."""
+    from models import StudyTimer, InterviewSession
+
+    timers = db.query(StudyTimer).all()
+    attempts = db.query(QuizAttempt).all()
+    interview_sessions = db.query(InterviewSession).filter(
+        InterviewSession.status == "completed"
+    ).all()
+
+    total_seconds = sum(t.duration_seconds for t in timers)
+    total_questions = sum(t.questions_answered for t in timers)
+    correct = sum(1 for a in attempts if a.is_correct)
+
+    # Today's stats
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).date()
+    today_timers = [t for t in timers if t.created_at.date() == today]
+    today_seconds = sum(t.duration_seconds for t in today_timers)
+    today_questions = sum(t.questions_answered for t in today_timers)
+
+    # This week
+    week_start = datetime.now(timezone.utc) - timedelta(days=7)
+    week_timers = [t for t in timers if t.created_at >= week_start]
+    week_seconds = sum(t.duration_seconds for t in week_timers)
+
+    return {
+        "total_minutes_studied": round(total_seconds / 60),
+        "total_questions_answered": len(attempts),
+        "overall_accuracy": round(correct / max(len(attempts), 1) * 100),
+        "total_interview_sessions": len(interview_sessions),
+        "today_minutes": round(today_seconds / 60),
+        "today_questions": today_questions,
+        "week_minutes": round(week_seconds / 60),
+        "streak_days": _calculate_streak(timers),
+    }
+
+
+def _calculate_streak(timers) -> int:
+    """Calculate consecutive days studied."""
+    if not timers:
+        return 0
+    from datetime import timedelta
+    dates = sorted(set(t.created_at.date() for t in timers), reverse=True)
+    today = datetime.now(timezone.utc).date()
+    streak = 0
+    current = today
+    for date in dates:
+        if date == current or date == current - timedelta(days=1):
+            streak += 1
+            current = date
+        else:
+            break
+    return streak
+
+
+class PitchRequest(BaseModel):
+    project_id: str
+    pitch_text: str
+    target_audience: str = "technical"  # technical, non-technical, executive
+
+
+class WhyCompanyRequest(BaseModel):
+    project_id: str
+    job_description: str
+    company_name: str
+
+
+class GitHubImportRequest(BaseModel):
+    repo_url: str  # e.g. https://github.com/username/repo-name
+    company: str = ""
+    brief: str = ""
+
+
+@router.post("/{project_id}/toggle-featured")
+def toggle_featured(project_id: str, db: Session = Depends(get_db)):
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+    p.featured = 0 if p.featured else 1
+    db.commit()
+    return {"featured": p.featured, "project_id": project_id}
+
+
+@router.post("/{project_id}/pitch-feedback")
+def get_pitch_feedback(project_id: str, req: PitchRequest, db: Session = Depends(get_db)):
+    """Evaluates a 30-second elevator pitch for a project."""
+    import anthropic as _ant
+    import os as _os
+
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+
+    word_count = len(req.pitch_text.split())
+    # Average speaking pace is ~130 words per minute
+    estimated_seconds = round((word_count / 130) * 60)
+
+    ai_client = _ant.Anthropic(api_key=_os.getenv("ANTHROPIC_API_KEY"))
+    try:
+        response = ai_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": f"""Evaluate this elevator pitch for a software project.
+
+PROJECT: {p.name} for {p.company}
+STACK: {p.stack}
+BUILD SUMMARY: {p.build_summary[:500] if p.build_summary else ""}
+
+TARGET AUDIENCE: {req.target_audience}
+WORD COUNT: {word_count} words (~{estimated_seconds} seconds to speak)
+
+PITCH:
+{req.pitch_text}
+
+Evaluate on:
+1. Does it explain WHAT the project does clearly?
+2. Does it explain WHO it's for / what PROBLEM it solves?
+3. Does it include ONE impressive technical detail?
+4. Is it the right length? (ideal: 30-45 seconds = ~65-100 words)
+5. Would a hiring manager remember this after 10 other candidates?
+
+Respond with JSON only:
+{{
+  "score": 0-100,
+  "estimated_seconds": {estimated_seconds},
+  "verdict": "too short|too long|just right",
+  "strengths": ["what worked"],
+  "gaps": ["what's missing"],
+  "rewritten": "A stronger version of this pitch in under 45 seconds that covers what/who/wow",
+  "one_liner": "A single memorable sentence that captures the essence of this project"
+}}"""}]
+        )
+        text = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        result = json.loads(text)
+        result["word_count"] = word_count
+        result["estimated_seconds"] = estimated_seconds
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Pitch feedback failed: {str(e)}")
+
+
+@router.post("/{project_id}/why-this-company")
+def generate_why_this_company(project_id: str, req: WhyCompanyRequest, db: Session = Depends(get_db)):
+    """
+    Generates a compelling 'why this company' answer that connects
+    the candidate's specific project to what the company is building.
+    """
+    import anthropic as _ant
+    import os as _os
+
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+
+    # Get all projects for broader context
+    all_projects = db.query(Project).all()
+    project_list = ", ".join(f"{proj.name} ({proj.company})" for proj in all_projects[:5])
+
+    ai_client = _ant.Anthropic(api_key=_os.getenv("ANTHROPIC_API_KEY"))
+    try:
+        response = ai_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[{"role": "user", "content": f"""You are helping a software engineer craft a compelling answer to "Why do you want to work at {req.company_name}?"
+
+CANDIDATE BACKGROUND:
+- Built {p.name} specifically for {p.company} — {p.stack}
+- Also built: {project_list}
+- Build summary: {p.build_summary[:600] if p.build_summary else ""}
+
+JOB DESCRIPTION:
+{req.job_description[:1500]}
+
+Generate a compelling, specific, authentic "why this company" answer that:
+1. Connects their {p.name} project directly to what {req.company_name} is building
+2. References specific things from the job description
+3. Shows genuine understanding of the company's technical challenges
+4. Is 3-4 sentences, conversational, not rehearsed-sounding
+5. Ends with what they specifically want to learn or contribute
+
+Also generate follow-up talking points in case the interviewer asks to elaborate.
+
+Respond with JSON only:
+{{
+  "main_answer": "the 3-4 sentence answer",
+  "talking_points": ["specific elaboration point 1", "specific elaboration point 2", "specific elaboration point 3"],
+  "connection": "one sentence explaining how their project directly relates to this company's work",
+  "what_to_avoid": "one thing that would make this answer sound generic"
+}}"""}]
+        )
+        text = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        return json.loads(text)
+    except Exception as e:
+        raise HTTPException(500, f"Why this company generation failed: {str(e)}")
+
+
 @router.get("/{project_id}")
 def get_project(project_id: str, db: Session = Depends(get_db)):
     p = db.query(Project).filter(Project.id == project_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")
     return project_to_dict(p)
+
+
+@router.post("/{project_id}/study-session")
+def log_study_session(project_id: str, session_type: str, duration_seconds: int,
+                      questions_answered: int = 0, correct_answers: int = 0,
+                      db: Session = Depends(get_db)):
+    """Log a completed study session for time tracking."""
+    from models import StudyTimer
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+
+    timer = StudyTimer(
+        project_id=project_id,
+        session_type=session_type,
+        duration_seconds=duration_seconds,
+        questions_answered=questions_answered,
+        correct_answers=correct_answers,
+    )
+    db.add(timer)
+    db.commit()
+    return {"logged": True}
+
+
+@router.get("/{project_id}/readiness")
+def get_readiness_score(project_id: str, db: Session = Depends(get_db)):
+    """
+    Calculates an interview readiness score (0-100) for a project based on:
+    - Quiz accuracy (40%)
+    - Interview scores (30%)
+    - Time studied (15%)
+    - Code walkthrough completion (15%)
+    """
+    from models import StudyTimer, InterviewSession
+
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+
+    # 1. Quiz accuracy score (40%)
+    attempts = db.query(QuizAttempt).filter(QuizAttempt.project_id == project_id).all()
+    if attempts:
+        correct = sum(1 for a in attempts if a.is_correct)
+        quiz_accuracy = correct / len(attempts)
+        quiz_score = quiz_accuracy * 40
+    else:
+        quiz_score = 0
+        quiz_accuracy = 0
+
+    # 2. Interview score (30%)
+    sessions = db.query(InterviewSession).filter(
+        InterviewSession.project_id == project_id,
+        InterviewSession.status == "completed",
+        InterviewSession.score != None,
+    ).all()
+    if sessions:
+        avg_interview = sum(s.score for s in sessions) / len(sessions)
+        interview_score = (avg_interview / 100) * 30
+    else:
+        interview_score = 0
+
+    # 3. Time studied (15%) — max score at 120 minutes
+    timers = db.query(StudyTimer).filter(StudyTimer.project_id == project_id).all()
+    total_seconds = sum(t.duration_seconds for t in timers)
+    total_minutes = total_seconds / 60
+    time_score = min(15, (total_minutes / 120) * 15)
+
+    # 4. Code walkthrough (15%) — gets full score if any walkthrough done
+    walkthrough_done = any(t.session_type == "walkthrough" for t in timers)
+    walkthrough_score = 15 if walkthrough_done else 0
+
+    total = round(quiz_score + interview_score + time_score + walkthrough_score)
+
+    # Readiness label
+    if total >= 80:
+        label = "Interview ready"
+        color = "green"
+    elif total >= 60:
+        label = "Almost ready"
+        color = "amber"
+    elif total >= 40:
+        label = "In progress"
+        color = "blue"
+    else:
+        label = "Just starting"
+        color = "muted"
+
+    return {
+        "score": total,
+        "label": label,
+        "color": color,
+        "breakdown": {
+            "quiz_accuracy": round(quiz_score),
+            "interview_score": round(interview_score),
+            "time_studied": round(time_score),
+            "walkthrough": round(walkthrough_score),
+        },
+        "stats": {
+            "total_quiz_attempts": len(attempts),
+            "quiz_accuracy_pct": round(quiz_accuracy * 100) if attempts else 0,
+            "interview_sessions": len(sessions),
+            "avg_interview_score": round(sum(s.score for s in sessions) / len(sessions)) if sessions else 0,
+            "total_minutes_studied": round(total_minutes),
+            "walkthrough_done": walkthrough_done,
+        }
+    }
+
+
+@router.get("/{project_id}/study-history")
+def get_study_history(project_id: str, db: Session = Depends(get_db)):
+    """
+    Returns a full study history for a project including:
+    - What has been studied (quiz topics, interview types, walkthroughs)
+    - What still needs work (weak spots, low accuracy areas)
+    - What has been mastered (high accuracy, high interview scores)
+    - Key concepts and notes to remember
+    """
+    from models import StudyTimer, InterviewSession, QuizQuestion
+
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+
+    timers = db.query(StudyTimer).filter(StudyTimer.project_id == project_id).all()
+    attempts = db.query(QuizAttempt).filter(QuizAttempt.project_id == project_id).all()
+    questions = db.query(QuizQuestion).filter(QuizQuestion.project_id == project_id).all()
+    q_map = {q.id: q for q in questions}
+
+    studied_types = list(set(t.session_type for t in timers))
+    total_minutes = round(sum(t.duration_seconds for t in timers) / 60)
+    total_questions = len(attempts)
+    correct = sum(1 for a in attempts if a.is_correct)
+    accuracy = round(correct / max(total_questions, 1) * 100)
+
+    type_stats = {}
+    for attempt in attempts:
+        q = q_map.get(attempt.question_id)
+        if not q:
+            continue
+        if q.question_type not in type_stats:
+            type_stats[q.question_type] = {"correct": 0, "total": 0}
+        type_stats[q.question_type]["total"] += 1
+        if attempt.is_correct:
+            type_stats[q.question_type]["correct"] += 1
+
+    mastered = []
+    needs_work = []
+    not_started = []
+    all_types = ["architecture", "code", "system_design", "flashcard", "code_walkthrough"]
+    for qtype in all_types:
+        if qtype not in type_stats:
+            not_started.append(qtype)
+        else:
+            stats = type_stats[qtype]
+            acc = stats["correct"] / max(stats["total"], 1) * 100
+            if acc >= 80:
+                mastered.append({"type": qtype, "accuracy": round(acc)})
+            else:
+                needs_work.append({"type": qtype, "accuracy": round(acc)})
+
+    interview_sessions = db.query(InterviewSession).filter(
+        InterviewSession.project_id == project_id,
+        InterviewSession.status == "completed"
+    ).all()
+
+    interview_summary = []
+    for s in interview_sessions:
+        interview_summary.append({
+            "type": s.interview_type,
+            "difficulty": s.difficulty,
+            "score": s.score,
+            "date": s.created_at.strftime("%Y-%m-%d"),
+            "feedback": (s.feedback[:200] if s.feedback else ""),
+        })
+
+    key_concepts = []
+    for q in questions:
+        if q.times_correct >= 2:
+            key_concepts.append({
+                "concept": q.question[:100],
+                "answer": q.correct_answer[:150],
+                "type": q.question_type,
+            })
+
+    return {
+        "project_id": project_id,
+        "project_name": p.name,
+        "company": p.company,
+        "stack": p.stack,
+        "studied": {
+            "total_minutes": total_minutes,
+            "total_questions": total_questions,
+            "overall_accuracy": accuracy,
+            "session_types": studied_types,
+        },
+        "mastered": mastered,
+        "needs_work": needs_work,
+        "not_started": not_started,
+        "interview_history": interview_summary,
+        "key_concepts": key_concepts[:20],
+        "build_summary": (p.build_summary[:500] if p.build_summary else ""),
+    }
+
+
+@router.get("/{project_id}/study-doc")
+def export_study_doc(project_id: str, db: Session = Depends(get_db)):
+    """
+    Generates a shareable study document for a project.
+    Can be given to a friend/mentor to quiz you with.
+    Returns markdown formatted text.
+    """
+    from models import InterviewSession, QuizQuestion
+
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+
+    attempts = db.query(QuizAttempt).filter(QuizAttempt.project_id == project_id).all()
+    questions = db.query(QuizQuestion).filter(QuizQuestion.project_id == project_id).all()
+    correct = sum(1 for a in attempts if a.is_correct)
+    accuracy = round(correct / max(len(attempts), 1) * 100)
+
+    by_type = {}
+    for q in questions:
+        if q.question_type not in by_type:
+            by_type[q.question_type] = []
+        by_type[q.question_type].append(q)
+
+    weak = [q for q in questions if q.times_shown > 0 and (q.times_correct / q.times_shown) < 0.7]
+
+    interviews = db.query(InterviewSession).filter(
+        InterviewSession.project_id == project_id,
+        InterviewSession.status == "completed"
+    ).order_by(InterviewSession.created_at.desc()).limit(3).all()
+
+    doc = f"""# Study Document — {p.name}
+**Company:** {p.company}
+**Stack:** {p.stack}
+**Overall quiz accuracy:** {accuracy}%
+**Generated:** {datetime.now(timezone.utc).strftime("%B %d, %Y")}
+
+---
+
+## Project Overview
+
+{p.build_summary[:800] if p.build_summary else "No build summary available. Run Refresh to generate one."}
+
+---
+
+## Key Interview Questions (ask me these)
+
+"""
+    for qtype, qs in by_type.items():
+        if not qs:
+            continue
+        doc += f"\n### {qtype.replace('_', ' ').title()}\n\n"
+        for q in qs[:5]:
+            doc += f"**Q: {q.question}**\n"
+            doc += f"A: {q.correct_answer}\n\n"
+
+    if weak:
+        doc += "\n---\n\n## Areas I Still Need Work On\n\n"
+        doc += "*These are questions I have answered incorrectly — focus extra time here:*\n\n"
+        for q in weak[:10]:
+            acc = round(q.times_correct / max(q.times_shown, 1) * 100)
+            doc += f"- **[{acc}% accuracy]** {q.question}\n"
+
+    if interviews:
+        doc += "\n---\n\n## Recent Interview Feedback\n\n"
+        for s in interviews:
+            doc += f"**{s.interview_type.replace('_', ' ').title()} ({s.difficulty}) — Score: {s.score}/100**\n"
+            if s.feedback:
+                doc += f"{s.feedback}\n\n"
+
+    doc += "\n---\n\n## Quick Reference — Stack & Architecture\n\n"
+    doc += f"**Stack:** {p.stack}\n\n"
+    if p.build_summary:
+        doc += f"{p.build_summary[:1000]}\n"
+
+    doc += "\n---\n*Generated by SwarmOS — your AI-powered interview prep system*\n"
+
+    return {"markdown": doc, "project_name": p.name}
+
 
 @router.patch("/{project_id}")
 def update_project(project_id: str, update: ProjectUpdate, db: Session = Depends(get_db)):

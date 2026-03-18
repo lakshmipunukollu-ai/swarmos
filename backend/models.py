@@ -38,6 +38,7 @@ class Project(Base):
     build_summary = Column(Text, default="")
     hiring_notes = Column(Text, default="")
     brief = Column(Text, default="")
+    featured = Column(Integer, default=0)  # 0 = normal, 1 = featured/highlighted
     estimated_minutes = Column(Integer, default=120)
     elapsed_seconds = Column(Integer, default=0)
     started_at = Column(DateTime, nullable=True)
@@ -141,6 +142,17 @@ class WeakSpot(Base):
     last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class StudyTimer(Base):
+    __tablename__ = "study_timers"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String, nullable=False)
+    session_type = Column(String, nullable=False)  # quiz, interview, walkthrough, study, defend
+    duration_seconds = Column(Integer, default=0)
+    questions_answered = Column(Integer, default=0)
+    correct_answers = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -157,6 +169,11 @@ def create_tables():
     if "brief" not in [c["name"] for c in insp.get_columns("projects")]:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE projects ADD COLUMN brief TEXT DEFAULT ''"))
+            conn.commit()
+
+    if "featured" not in [c["name"] for c in insp.get_columns("projects")]:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN featured INTEGER DEFAULT 0"))
             conn.commit()
 
     # Add wrong_answers to quiz_questions if missing

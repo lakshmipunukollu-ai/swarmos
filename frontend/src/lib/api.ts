@@ -17,6 +17,7 @@ export interface Project {
   minutes_remaining: number
   has_build_summary: boolean
   build_summary: string
+  featured: number
   started_at: string | null
   completed_at: string | null
 }
@@ -97,12 +98,59 @@ export const api = {
     const r = await fetch(`${API}/api/quiz/stats/${project_id}`, { cache: 'no-store' })
     return r.json()
   },
+  async getErrorAnalysis(project_id: string) {
+    const r = await fetch(`${API}/api/quiz/error-analysis/${project_id}`, { cache: 'no-store' })
+    return r.json()
+  },
+  async getDueForReview() {
+    const r = await fetch(`${API}/api/projects/due-for-review`, { cache: 'no-store' })
+    return r.json()
+  },
+  async logStudySession(project_id: string, session_type: string, duration_seconds: number, questions_answered: number = 0, correct_answers: number = 0) {
+    const r = await fetch(
+      `${API}/api/projects/${project_id}/study-session?session_type=${session_type}&duration_seconds=${duration_seconds}&questions_answered=${questions_answered}&correct_answers=${correct_answers}`,
+      { method: 'POST' }
+    )
+    return r.json()
+  },
+  async getReadinessScore(project_id: string) {
+    const r = await fetch(`${API}/api/projects/${project_id}/readiness`, { cache: 'no-store' })
+    return r.json()
+  },
+  async getStudyOverview() {
+    const r = await fetch(`${API}/api/projects/study-stats/overview`, { cache: 'no-store' })
+    return r.json()
+  },
+  async getStudyHistory(project_id: string) {
+    const r = await fetch(`${API}/api/projects/${project_id}/study-history`, { cache: 'no-store' })
+    return r.json()
+  },
+  async exportStudyDoc(project_id: string) {
+    const r = await fetch(`${API}/api/projects/${project_id}/study-doc`, { cache: 'no-store' })
+    return r.json()
+  },
+  async checkBraindump(project_id: string, recall_text: string) {
+    const r = await fetch(`${API}/api/study/braindump`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, recall_text }),
+    })
+    return r.json()
+  },
   async deleteProject(id: string) {
     const r = await fetch(`${API}/api/projects/${id}`, { method: 'DELETE' })
     return r.json()
   },
   async refreshProject(id: string) {
     const r = await fetch(`${API}/api/projects/${id}/refresh`, { method: 'POST' })
+    return r.json()
+  },
+  async importFromGitHub(repo_url: string, company: string = '', brief: string = '') {
+    const r = await fetch(`${API}/api/projects/import-github`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_url, company, brief }),
+    })
     return r.json()
   },
   async getHiringLens(id: string) {
@@ -118,6 +166,29 @@ export const api = {
       `${API}/api/quiz/walkthrough?project_id=${encodeURIComponent(project_id)}&file_path=${encodeURIComponent(file_path)}`,
       { method: 'POST' }
     )
+    return r.json()
+  },
+  async getFileContent(project_id: string, file_path: string) {
+    const r = await fetch(
+      `${API}/api/quiz/file-content/${project_id}?file_path=${encodeURIComponent(file_path)}`,
+      { cache: 'no-store' }
+    )
+    return r.json()
+  },
+  async explainTerm(term: string, context_code: string, project_id: string, depth: string = 'simple') {
+    const r = await fetch(`${API}/api/quiz/explain-term`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ term, context_code, project_id, depth }),
+    })
+    return r.json()
+  },
+  async codeChat(project_id: string, file_path: string, file_content: string, question: string, history: any[]) {
+    const r = await fetch(`${API}/api/quiz/code-chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, file_path, file_content, question, history }),
+    })
     return r.json()
   },
   async uploadStudyText(title: string, subject: string, content: string) {
@@ -191,6 +262,62 @@ export const api = {
   },
   async getInterviewSessions(project_id: string) {
     const r = await fetch(`${API}/api/interview/sessions/${project_id}`, { cache: 'no-store' })
+    return r.json()
+  },
+  async getDefendQuestion(project_id: string, file_path: string, code_snippet: string, question_focus: string) {
+    const r = await fetch(`${API}/api/interview/defend/question`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, file_path, code_snippet, question_focus }),
+    })
+    return r.json()
+  },
+  async evaluateDefense(project_id: string, file_path: string, code_snippet: string, question: string, answer: string) {
+    const r = await fetch(`${API}/api/interview/defend/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, file_path, code_snippet, question, answer }),
+    })
+    return r.json()
+  },
+  async generateAdaptiveQuiz(project_id: string, chat_topics: string[] = []) {
+    const r = await fetch(`${API}/api/quiz/adaptive-generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, chat_topics }),
+    })
+    return r.json()
+  },
+  async toggleFeatured(project_id: string) {
+    const r = await fetch(`${API}/api/projects/${project_id}/toggle-featured`, { method: 'POST' })
+    return r.json()
+  },
+  async getPitchFeedback(project_id: string, pitch_text: string, target_audience: string = 'technical') {
+    const r = await fetch(`${API}/api/projects/${project_id}/pitch-feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, pitch_text, target_audience }),
+    })
+    return r.json()
+  },
+  async getWhyThisCompany(project_id: string, job_description: string, company_name: string) {
+    const r = await fetch(`${API}/api/projects/${project_id}/why-this-company`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, job_description, company_name }),
+    })
+    return r.json()
+  },
+  async evaluateFeynman(project_id: string, concept: string, explanation: string) {
+    const r = await fetch(`${API}/api/quiz/feynman`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id, concept, explanation }),
+    })
+    return r.json()
+  },
+  async getAIDefensePrep() {
+    const r = await fetch(`${API}/api/interview/ai-defense-prep`, { cache: 'no-store' })
     return r.json()
   },
 }

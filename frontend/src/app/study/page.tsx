@@ -1,8 +1,8 @@
 'use client'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { api } from '@/lib/api'
 
-type UploadMode = 'text' | 'url' | 'file'
+type UploadMode = 'text' | 'url' | 'file' | 'braindump'
 type StudyState = 'upload' | 'quiz'
 
 export default function Study() {
@@ -22,10 +22,32 @@ export default function Study() {
   const [shuffled, setShuffled] = useState<string[]>([])
   const [fileName, setFileName] = useState<string>('')
   const fileRef = useRef<HTMLInputElement>(null)
+  const [braindumpProject, setBraindumpProject] = useState('')
+  const [braindumpProjects, setBraindumpProjects] = useState<any[]>([])
+  const [braindumpResult, setBraindumpResult] = useState<any>(null)
+
+  useEffect(() => {
+    api.getProjects().then(data => {
+      const withSummary = data.filter((p: any) => p.has_build_summary)
+      setBraindumpProjects(withSummary)
+      if (withSummary.length > 0) setBraindumpProject(withSummary[0].id)
+    }).catch(() => {})
+  }, [])
 
   const shuffle = (q: any) => {
     const opts = [q.correct_answer, ...(q.wrong_answers || [])].sort(() => Math.random() - 0.5)
     setShuffled(opts)
+  }
+
+  const handleBraindump = async () => {
+    if (!textContent.trim() || !braindumpProject) return
+    setLoading(true)
+    try {
+      const result = await api.checkBraindump(braindumpProject, textContent)
+      setBraindumpResult(result)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleUpload = async () => {
@@ -214,7 +236,7 @@ export default function Study() {
 
       {/* Mode tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
-        {([['text', 'Paste text'], ['url', 'URL'], ['file', 'Upload file']] as const).map(([m, label]) => (
+        {([['text', 'Paste text'], ['url', 'URL'], ['file', 'Upload file'], ['braindump', 'Brain dump']] as const).map(([m, label]) => (
           <button key={m} onClick={() => setMode(m)} style={{
             padding: '7px 16px', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase',
             borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
@@ -276,14 +298,69 @@ export default function Study() {
         </div>
       )}
 
-      <button onClick={handleUpload} disabled={loading || !title.trim() || !subject.trim()} style={{
+      {mode === 'braindump' && (
+        <div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Project</div>
+            <select value={braindumpProject} onChange={e => setBraindumpProject(e.target.value)} style={{
+              width: '100%', padding: '10px 14px', background: 'var(--surface)',
+              border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 13, fontFamily: 'inherit',
+            }}>
+              {braindumpProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <textarea
+            value={textContent}
+            onChange={e => setTextContent(e.target.value)}
+            placeholder="Write everything you remember about this project from scratch — architecture, tech stack, key features, how it works, challenges you faced, decisions you made. Don't look anything up."
+            style={{
+              width: '100%', height: 260, background: 'var(--surface)',
+              border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)',
+              fontSize: 13, padding: 16, resize: 'none', outline: 'none',
+              lineHeight: 1.7, fontFamily: 'inherit', marginBottom: 16,
+            }}
+          />
+          <button onClick={handleBraindump} disabled={loading || !textContent.trim() || !braindumpProject} style={{
+            width: '100%', padding: '12px 0', background: loading ? 'var(--border)' : 'var(--text)',
+            color: 'var(--bg)', border: 'none', borderRadius: 8,
+            cursor: loading ? 'not-allowed' : 'pointer',
+            fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
+          }}>
+            {loading ? 'Checking your recall...' : 'Check my recall →'}
+          </button>
+
+          {braindumpResult && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                <div style={{ flex: 1, background: 'rgba(74,222,128,0.06)', border: '1px solid var(--green)', borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontSize: 10, color: 'var(--green)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>✓ You remembered</div>
+                  {(braindumpResult.remembered || []).map((r: string, i: number) => (
+                    <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '3px 0', lineHeight: 1.6 }}>› {r}</div>
+                  ))}
+                </div>
+                <div style={{ flex: 1, background: 'rgba(248,113,113,0.06)', border: '1px solid var(--red)', borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontSize: 10, color: 'var(--red)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>✗ You forgot</div>
+                  {(braindumpResult.forgot || []).map((f: string, i: number) => (
+                    <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '3px 0', lineHeight: 1.6 }}>› {f}</div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', background: 'var(--surface)', borderRadius: 8, padding: 14, border: '1px solid var(--border)', lineHeight: 1.7 }}>
+                {braindumpResult.feedback}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode !== 'braindump' && <button onClick={handleUpload} disabled={loading || !title.trim() || !subject.trim()} style={{
         width: '100%', padding: '12px 0', background: loading ? 'var(--border)' : 'var(--text)',
         color: 'var(--bg)', border: 'none', borderRadius: 8,
         cursor: loading ? 'not-allowed' : 'pointer',
         fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
       }}>
         {loading ? 'Generating questions...' : 'Generate quiz →'}
-      </button>
+      </button>}
     </div>
   )
 }

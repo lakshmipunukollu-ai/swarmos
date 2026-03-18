@@ -13,6 +13,11 @@ export default function Intake() {
   const [loading, setLoading] = useState(false)
   const [adding, setAdding] = useState(false)
   const [restored, setRestored] = useState(false)
+  const [importMode, setImportMode] = useState<'brief' | 'github'>('brief')
+  const [repoUrl, setRepoUrl] = useState('')
+  const [repoCompany, setRepoCompany] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<any>(null)
 
   // Restore from localStorage on mount
   useEffect(() => {
@@ -107,6 +112,142 @@ export default function Intake() {
           </div>
         </div>
 
+        <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
+          {[
+            { id: 'brief', label: 'Paste brief' },
+            { id: 'github', label: 'Import from GitHub' },
+          ].map(m => (
+            <button key={m.id} onClick={() => setImportMode(m.id as any)} style={{
+              padding: '7px 18px', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase',
+              borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer',
+              fontFamily: 'monospace',
+              background: importMode === m.id ? 'var(--text)' : 'transparent',
+              color: importMode === m.id ? 'var(--bg)' : 'var(--muted)',
+            }}>{m.label}</button>
+          ))}
+        </div>
+
+        {importMode === 'github' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
+              Import any public GitHub repository. SwarmOS reads the codebase, generates a build summary,
+              and sets up quiz + interview prep automatically.
+            </div>
+
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>GitHub repo URL</div>
+              <input
+                value={repoUrl}
+                onChange={e => setRepoUrl(e.target.value)}
+                placeholder="https://github.com/username/repo-name"
+                style={{
+                  width: '100%', padding: '11px 14px', background: 'var(--surface)',
+                  border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)',
+                  fontSize: 13, outline: 'none', fontFamily: 'monospace',
+                }}
+              />
+            </div>
+
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Company <span style={{ color: 'var(--border)' }}>(optional)</span></div>
+              <input
+                value={repoCompany}
+                onChange={e => setRepoCompany(e.target.value)}
+                placeholder="e.g. Replicated, Personal, Side project..."
+                style={{
+                  width: '100%', padding: '11px 14px', background: 'var(--surface)',
+                  border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)',
+                  fontSize: 13, outline: 'none', fontFamily: 'inherit',
+                }}
+              />
+            </div>
+
+            <button
+              onClick={async () => {
+                if (!repoUrl.trim()) return
+                setImporting(true)
+                setImportResult(null)
+                try {
+                  const result = await api.importFromGitHub(repoUrl, repoCompany)
+                  if (result.detail) {
+                    setImportResult({ error: result.detail })
+                  } else {
+                    setImportResult(result)
+                  }
+                } finally {
+                  setImporting(false)
+                }
+              }}
+              disabled={importing || !repoUrl.trim()}
+              style={{
+                padding: '12px 0', background: importing ? 'var(--border)' : 'var(--text)',
+                color: 'var(--bg)', border: 'none', borderRadius: 8,
+                cursor: importing ? 'not-allowed' : 'pointer',
+                fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
+              }}
+            >
+              {importing ? 'Importing... (this takes ~30 seconds)' : 'Import from GitHub →'}
+            </button>
+
+            {importResult?.error && (
+              <div style={{ fontSize: 13, color: 'var(--red)', padding: '10px 14px', background: 'rgba(248,113,113,0.08)', borderRadius: 8, border: '1px solid var(--red)' }}>
+                {importResult.error}
+              </div>
+            )}
+
+            {importResult && !importResult.error && (
+              <div style={{ background: 'var(--surface)', border: '1px solid var(--green)', borderRadius: 10, padding: 18 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>✓ {importResult.name}</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
+                  {importResult.company} · {importResult.stack} · {importResult.files_count} files
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.6 }}>
+                  {importResult.message} · {importResult.files_scanned} files analyzed
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <a href="/" style={{
+                    flex: 1, padding: '10px 0', background: 'var(--green)', color: '#000',
+                    border: 'none', borderRadius: 8, cursor: 'pointer',
+                    fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
+                    textDecoration: 'none', textAlign: 'center',
+                  }}>
+                    View on dashboard →
+                  </a>
+                  <a href={`/quiz?project=${importResult.id}`} style={{
+                    flex: 1, padding: '10px 0', background: 'transparent',
+                    border: '1px solid var(--amber)', borderRadius: 8,
+                    fontSize: 13, color: 'var(--amber)', fontFamily: 'monospace',
+                    textDecoration: 'none', textAlign: 'center',
+                  }}>
+                    Start quiz →
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* Quick links for your own repos */}
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Quick import</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[
+                  { label: 'SwarmOS', url: 'https://github.com/lakshmipunukollu-ai/swarmos', company: 'Personal' },
+                  { label: 'SwarmOS Community', url: 'https://github.com/lakshmipunukollu-ai/swarmos-community', company: 'Personal' },
+                ].map(repo => (
+                  <button key={repo.url} onClick={() => { setRepoUrl(repo.url); setRepoCompany(repo.company) }} style={{
+                    padding: '8px 12px', textAlign: 'left', background: 'var(--surface)',
+                    border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
+                    fontSize: 12, color: 'var(--muted)', fontFamily: 'monospace',
+                  }}>
+                    ↗ {repo.label} <span style={{ color: 'var(--border)' }}>{repo.url}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {importMode === 'brief' && (
+          <>
         {restored && (
           <div style={{ fontSize: 11, color: 'var(--amber)', background: 'rgba(245,166,35,0.08)', border: '1px solid var(--amber)', borderRadius: 6, padding: '6px 12px' }}>
             ↩ Restored from your last session
@@ -168,6 +309,8 @@ export default function Intake() {
             Clear
           </button>
         </div>
+          </>
+        )}
       </div>
 
       {/* Right column — analysis result */}

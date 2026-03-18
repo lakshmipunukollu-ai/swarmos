@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { api } from '@/lib/api'
+import { useStudyTimer } from '@/hooks/useStudyTimer'
 
 const PROJECTS = [
   { id: 'fsp-agentic-scheduler', name: 'FSP Scheduler' },
@@ -50,6 +51,7 @@ function InterviewContent() {
   const [answerLibrary, setAnswerLibrary] = useState<any[]>([])
   const [weakSpots, setWeakSpots] = useState<any[]>([])
   const [expandedAnswer, setExpandedAnswer] = useState<number | null>(null)
+  const [ttsEnabled, setTtsEnabled] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [isVideoOn, setIsVideoOn] = useState(false)
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
@@ -58,6 +60,8 @@ function InterviewContent() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const recognitionRef = useRef<any>(null)
+
+  useStudyTimer(projectId, 'interview', phase === 'interview')
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -101,6 +105,21 @@ function InterviewContent() {
       recognitionRef.current = null
     }
     setIsRecording(false)
+  }
+
+  const speak = (text: string) => {
+    if (!ttsEnabled) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = 0.95
+    utterance.pitch = 1
+    utterance.volume = 1
+    const voices = window.speechSynthesis.getVoices()
+    const preferred = voices.find(v =>
+      v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Neural') || v.name.includes('Samantha') || v.name.includes('Daniel'))
+    )
+    if (preferred) utterance.voice = preferred
+    window.speechSynthesis.speak(utterance)
   }
 
   const toggleMic = () => {
@@ -149,6 +168,7 @@ function InterviewContent() {
       const result = await api.startInterview(projectId, interviewType, difficulty, targetCompany)
       setSessionId(result.session_id)
       setMessages([{ role: 'interviewer', content: result.opening_message }])
+      if (ttsEnabled) speak(result.opening_message)
       setPhase('interview')
       setVideoUrl(null)
     } finally {
@@ -170,6 +190,7 @@ function InterviewContent() {
         content: result.message,
         evaluation: result.evaluation,
       }])
+      if (result.message) speak(result.message)
       if (result.is_final) setIsFinal(true)
     } finally {
       setLoading(false)
@@ -178,6 +199,7 @@ function InterviewContent() {
 
   const finishInterview = async () => {
     if (!sessionId) return
+    window.speechSynthesis.cancel()
     if (isVideoOn) stopVideo()
     setLoading(true)
     try {
@@ -406,7 +428,7 @@ function InterviewContent() {
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>{typeLabel} Interview</div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{typeLabel} Interview{ttsEnabled && <span style={{ fontSize: 11, color: 'var(--green)' }}> 🔊</span>}</div>
             <div style={{ fontSize: 11, color: 'var(--muted)' }}>
               {diffLabel} · {PROJECTS.find(p => p.id === projectId)?.name}
               {targetCompany && <span style={{ color: 'var(--blue)', marginLeft: 8 }}>· {targetCompany}</span>}
@@ -554,6 +576,15 @@ function InterviewContent() {
         </div>
       </div>
 
+      <button onClick={() => setTtsEnabled(v => !v)} style={{
+        width: '100%', padding: '11px 0', marginBottom: 12,
+        background: ttsEnabled ? 'rgba(74,222,128,0.1)' : 'transparent',
+        border: `1px solid ${ttsEnabled ? 'var(--green)' : 'var(--border)'}`,
+        borderRadius: 8, cursor: 'pointer', fontSize: 13,
+        color: ttsEnabled ? 'var(--green)' : 'var(--muted)', fontFamily: 'monospace',
+      }}>
+        {ttsEnabled ? '🔊 Voice on — interviewer will speak' : '🔇 Voice off — click to enable'}
+      </button>
       <button onClick={startInterview} disabled={loading} style={{ width: '100%', padding: '14px 0', background: 'var(--text)', color: 'var(--bg)', border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 700, fontFamily: 'monospace', marginBottom: 12 }}>
         {loading ? 'Starting...' : 'Start interview →'}
       </button>

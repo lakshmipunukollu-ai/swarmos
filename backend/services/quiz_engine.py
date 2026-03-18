@@ -33,20 +33,53 @@ def generate_questions(project_id: str, question_type: str, level: int, count: i
         build_summary = project.build_summary or ""
         summary_section = f"\n\nBUILD SUMMARY (actual code written):\n{build_summary[:3000]}" if build_summary else ""
 
+        existing_questions = db.query(QuizQuestion).filter(
+            QuizQuestion.project_id == project_id,
+            QuizQuestion.question_type == question_type,
+        ).order_by(QuizQuestion.created_at.desc()).limit(20).all()
+
+        already_asked = ""
+        if existing_questions:
+            already_asked = "\n\nALREADY ASKED (do NOT repeat these — generate questions that test the same concepts from a DIFFERENT angle, using different scenarios, examples, or phrasings):\n"
+            for q in existing_questions:
+                already_asked += f"- {q.question}\n"
+
+        if level == 1:
+            scaffold_instructions = "Level 1: Start with WHAT — what does this do, what is this concept, what problem does it solve."
+        elif level == 2:
+            scaffold_instructions = "Level 2: Build on level 1 — ask WHY this approach was chosen, what tradeoffs were made, why not an alternative."
+        elif level == 3:
+            scaffold_instructions = "Level 3: Build on levels 1+2 — ask HOW it works in detail, what would break if changed, edge cases."
+        elif level == 4:
+            scaffold_instructions = "Level 4: Build on levels 1-3 — ask about failure modes, security concerns, what could go wrong in production."
+        elif level == 5:
+            scaffold_instructions = "Level 5: Build on all previous — ask how to extend it, scale it, redesign it, or apply the concept to a new problem."
+        else:
+            scaffold_instructions = LEVEL_DESCRIPTIONS.get(level, f"Level {level}")
+
         prompt = f"""You are a technical interviewer helping an engineer deeply understand a project they built.
 The engineer needs to be able to defend every decision in interviews.
+Questions should BUILD on each other — each question assumes the engineer understood the previous level.
 
 PROJECT: {project.name}
 COMPANY: {project.company}
 STACK: {project.stack}
 PORT: {project.port}{summary_section}
 
-LEVEL {level}: {LEVEL_DESCRIPTIONS[level]}
+SCAFFOLDING LEVEL {level}: {scaffold_instructions}
 QUESTION TYPE: {TYPE_PROMPTS[question_type]}
+
+{already_asked}
 
 Generate {count} questions at level {level}.
 Questions should be specific to THIS project, not generic.
-If level > 1, reference specific decisions made in this project.
+Each question should build on the understanding established by lower-level questions.
+Test UNDERSTANDING not MEMORIZATION — ask from new angles, use different scenarios.
+Never ask a question that can be answered by reciting a definition.
+
+IMPORTANT: Always include at least one Level 1 (WHAT) question in every batch,
+even if higher levels are requested. This ensures foundational understanding is
+always tested before depth. The remaining questions can be at level {level}.
 
 For architecture/code/system_design questions respond with JSON array:
 [{{
@@ -55,17 +88,19 @@ For architecture/code/system_design questions respond with JSON array:
   "wrong_answers": ["...", "...", "..."],
   "explanation": "Deep explanation of why this is correct and what the interviewer is really testing",
   "level": {level},
-  "type": "{question_type}"
+  "type": "{question_type}",
+  "builds_on": "what concept from a lower level this question assumes they understand"
 }}]
 
 For flashcard questions respond with JSON array:
 [{{
-  "question": "What is X?",
-  "correct_answer": "X is... (under 50 words)",
+  "question": "In the context of {project.name}, what happens when X?",
+  "correct_answer": "...",
   "wrong_answers": [],
-  "explanation": "Why this concept matters in the context of {project.name}",
+  "explanation": "Why this concept matters specifically in {project.name}",
   "level": {level},
-  "type": "flashcard"
+  "type": "flashcard",
+  "builds_on": "prerequisite concept"
 }}]
 
 Respond ONLY with the JSON array. No markdown. No preamble."""
@@ -82,6 +117,10 @@ Respond ONLY with the JSON array. No markdown. No preamble."""
 
         saved = []
         for q in questions:
+            explanation = q.get("explanation", "")
+            builds_on = q.get("builds_on", "")
+            if builds_on:
+                explanation = f"{explanation}\n\n[Builds on: {builds_on}]"
             question = QuizQuestion(
                 project_id=project_id,
                 question_type=q["type"],
@@ -89,7 +128,7 @@ Respond ONLY with the JSON array. No markdown. No preamble."""
                 question=q["question"],
                 correct_answer=q["correct_answer"],
                 wrong_answers=json.dumps(q.get("wrong_answers", [])),
-                explanation=q["explanation"],
+                explanation=explanation,
             )
             db.add(question)
             db.flush()

@@ -32,6 +32,22 @@ export default function ProjectDetail() {
   const [refreshing, setRefreshing] = useState(false)
   const [hiringLens, setHiringLens] = useState<any>(null)
   const [hiringLoading, setHiringLoading] = useState(false)
+  const [readiness, setReadiness] = useState<any>(null)
+  const [studyHistory, setStudyHistory] = useState<any>(null)
+  const [exportingDoc, setExportingDoc] = useState(false)
+  const [pitchText, setPitchText] = useState('')
+  const [pitchResult, setPitchResult] = useState<any>(null)
+  const [pitchLoading, setPitchLoading] = useState(false)
+  const [pitchAudience, setPitchAudience] = useState('technical')
+  const [jobDescription, setJobDescription] = useState('')
+  const [whyResult, setWhyResult] = useState<any>(null)
+  const [whyLoading, setWhyLoading] = useState(false)
+  const [feynmanConcept, setFeynmanConcept] = useState('')
+  const [feynmanExplanation, setFeynmanExplanation] = useState('')
+  const [feynmanResult, setFeynmanResult] = useState<any>(null)
+  const [feynmanLoading, setFeynmanLoading] = useState(false)
+  const [aiDefense, setAiDefense] = useState<any>(null)
+  const [prepSection, setPrepSection] = useState<'pitch' | 'why' | 'feynman' | 'defense'>('pitch')
 
   const load = useCallback(async () => {
     const [p, l, gl] = await Promise.all([
@@ -43,6 +59,8 @@ export default function ProjectDetail() {
     setLogs(l)
     setGroupedLogs(gl)
     setLoading(false)
+    api.getReadinessScore(id).then(setReadiness).catch(() => {})
+    api.getStudyHistory(id).then(setStudyHistory).catch(() => {})
   }, [id])
 
   useEffect(() => {
@@ -50,6 +68,10 @@ export default function ProjectDetail() {
     const interval = setInterval(load, 5000)
     return () => clearInterval(interval)
   }, [load])
+
+  useEffect(() => {
+    api.getAIDefensePrep().then(setAiDefense).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (autoScroll && logsEndRef.current) {
@@ -184,7 +206,7 @@ export default function ProjectDetail() {
       )}
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, alignItems: 'center' }}>
-        {['overview', 'logs', 'quiz'].map(t => (
+        {['overview', 'logs', 'quiz', 'study', 'prep'].map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding: '7px 16px', fontSize: 11, letterSpacing: 1, textTransform: 'uppercase',
             borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer', fontFamily: 'monospace',
@@ -215,6 +237,53 @@ export default function ProjectDetail() {
       </div>
 
       {tab === 'overview' && (
+        <div>
+        {readiness && (
+          <div style={{
+            background: 'var(--surface)', border: `1px solid var(--${readiness.color === 'green' ? 'green' : readiness.color === 'amber' ? 'amber' : 'border'})`,
+            borderRadius: 10, padding: 16, marginBottom: 16,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Interview readiness</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>{readiness.label}</span>
+                <span style={{ fontSize: 22, fontWeight: 700, color: `var(--${readiness.color === 'green' ? 'green' : readiness.color === 'amber' ? 'amber' : 'muted'})` }}>
+                  {readiness.score}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, marginBottom: 12, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: 3, transition: 'width 1s',
+                width: `${readiness.score}%`,
+                background: readiness.score >= 80 ? 'var(--green)' : readiness.score >= 60 ? 'var(--amber)' : 'var(--blue)',
+              }} />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+              {[
+                { label: 'Quiz accuracy', value: readiness.breakdown.quiz_accuracy, max: 40 },
+                { label: 'Interviews', value: readiness.breakdown.interview_score, max: 30 },
+                { label: 'Time studied', value: readiness.breakdown.time_studied, max: 15 },
+                { label: 'Code review', value: readiness.breakdown.walkthrough, max: 15 },
+              ].map(item => (
+                <div key={item.label} style={{ background: 'var(--bg)', borderRadius: 6, padding: '8px 10px', border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 9, color: 'var(--muted)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{item.label}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{item.value}<span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400 }}>/{item.max}</span></div>
+                </div>
+              ))}
+            </div>
+
+            {readiness.stats && (
+              <div style={{ marginTop: 10, fontSize: 11, color: 'var(--muted)', display: 'flex', gap: 16 }}>
+                <span>{readiness.stats.total_quiz_attempts} quiz attempts</span>
+                <span>{readiness.stats.interview_sessions} interview sessions</span>
+                <span>{readiness.stats.total_minutes_studied}m studied</span>
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Project info</div>
@@ -315,6 +384,7 @@ export default function ProjectDetail() {
               </div>
             )}
           </div>
+        </div>
         </div>
       )}
 
@@ -481,6 +551,418 @@ export default function ProjectDetail() {
           }}>
             Practice interview for {project.name} →
           </Link>
+        </div>
+      )}
+
+      {tab === 'study' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+            <button onClick={async () => {
+              setExportingDoc(true)
+              try {
+                const result = await api.exportStudyDoc(id)
+                const blob = new Blob([result.markdown], { type: 'text/markdown' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `${result.project_name.replace(/\s+/g, '-')}-study-doc.md`
+                a.click()
+                URL.revokeObjectURL(url)
+              } finally {
+                setExportingDoc(false)
+              }
+            }} disabled={exportingDoc} style={{
+              padding: '8px 18px', fontSize: 12, borderRadius: 6,
+              border: '1px solid var(--green)', background: 'transparent',
+              color: 'var(--green)', cursor: 'pointer', fontFamily: 'monospace',
+            }}>
+              {exportingDoc ? 'Exporting...' : '↓ Export study doc'}
+            </button>
+          </div>
+
+          {!studyHistory ? (
+            <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading study history...</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                {[
+                  { label: 'Time studied', value: `${studyHistory.studied?.total_minutes || 0}m` },
+                  { label: 'Questions answered', value: studyHistory.studied?.total_questions || 0 },
+                  { label: 'Overall accuracy', value: `${studyHistory.studied?.overall_accuracy || 0}%` },
+                  { label: 'Interviews done', value: studyHistory.interview_history?.length || 0 },
+                ].map(m => (
+                  <div key={m.label} style={{ background: 'var(--surface)', borderRadius: 8, padding: '10px 14px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 1 }}>{m.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700 }}>{m.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                <div style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid var(--green)', borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 10, color: 'var(--green)', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>✓ Mastered</div>
+                  {studyHistory.mastered?.length === 0 && <div style={{ fontSize: 11, color: 'var(--muted)' }}>Keep practicing to unlock</div>}
+                  {studyHistory.mastered?.map((m: any, i: number) => (
+                    <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '3px 0', display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ textTransform: 'capitalize' }}>{m.type.replace('_', ' ')}</span>
+                      <span style={{ color: 'var(--green)' }}>{m.accuracy}%</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid var(--red)', borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 10, color: 'var(--red)', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>⚠ Needs work</div>
+                  {studyHistory.needs_work?.length === 0 && <div style={{ fontSize: 11, color: 'var(--muted)' }}>Nothing here yet</div>}
+                  {studyHistory.needs_work?.map((m: any, i: number) => (
+                    <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '3px 0', display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ textTransform: 'capitalize' }}>{m.type.replace('_', ' ')}</span>
+                      <span style={{ color: 'var(--red)' }}>{m.accuracy}%</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>○ Not started</div>
+                  {studyHistory.not_started?.length === 0 && <div style={{ fontSize: 11, color: 'var(--green)' }}>All types attempted!</div>}
+                  {studyHistory.not_started?.map((t: string, i: number) => (
+                    <div key={i} style={{ fontSize: 12, color: 'var(--muted)', padding: '3px 0', textTransform: 'capitalize' }}>
+                      {t.replace('_', ' ')}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {studyHistory.interview_history?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Interview history</div>
+                  {studyHistory.interview_history.map((s: any, i: number) => (
+                    <div key={i} style={{ background: 'var(--surface)', borderRadius: 8, padding: '10px 14px', border: '1px solid var(--border)', marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 500, textTransform: 'capitalize' }}>{s.type.replace('_', ' ')} · {s.difficulty}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>{s.date}</div>
+                        {s.feedback && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, lineHeight: 1.5 }}>{s.feedback}</div>}
+                      </div>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: s.score >= 80 ? 'var(--green)' : s.score >= 60 ? 'var(--amber)' : 'var(--red)', flexShrink: 0, marginLeft: 12 }}>
+                        {s.score}/100
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {studyHistory.key_concepts?.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Key concepts you know</div>
+                  {studyHistory.key_concepts.slice(0, 8).map((c: any, i: number) => (
+                    <div key={i} style={{ background: 'var(--surface)', borderRadius: 8, padding: '10px 14px', border: '1px solid var(--border)', marginBottom: 6 }}>
+                      <div style={{ fontSize: 12, color: 'var(--text)', marginBottom: 4 }}>{c.concept}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>{c.answer}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {studyHistory.studied?.total_questions === 0 && studyHistory.interview_history?.length === 0 && (
+                <div style={{ color: 'var(--muted)', fontSize: 13, padding: 20, background: 'var(--surface)', borderRadius: 10, border: '1px solid var(--border)', textAlign: 'center' }}>
+                  No study history yet. Start quizzing or do an interview session to build your history.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'prep' && (
+        <div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+            {[
+              { id: 'pitch', label: '30-sec pitch' },
+              { id: 'why', label: 'Why this company' },
+              { id: 'feynman', label: 'Feynman check' },
+              { id: 'defense', label: 'AI defense' },
+            ].map(s => (
+              <button key={s.id} onClick={() => setPrepSection(s.id as 'pitch' | 'why' | 'feynman' | 'defense')} style={{
+                padding: '7px 14px', fontSize: 11, borderRadius: 6, letterSpacing: 1,
+                border: `1px solid ${prepSection === s.id ? 'var(--text)' : 'var(--border)'}`,
+                background: prepSection === s.id ? 'var(--text)' : 'transparent',
+                color: prepSection === s.id ? 'var(--bg)' : 'var(--muted)',
+                cursor: 'pointer', fontFamily: 'monospace', textTransform: 'uppercase',
+              }}>{s.label}</button>
+            ))}
+          </div>
+
+          {prepSection === 'pitch' && (
+            <div>
+              <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
+                Write your elevator pitch for {project.name}. Aim for 65-100 words (~30-45 seconds).
+                Say what it does, who it&apos;s for, and one impressive technical detail.
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                {['technical', 'non-technical', 'executive'].map(a => (
+                  <button key={a} onClick={() => setPitchAudience(a)} style={{
+                    padding: '5px 12px', fontSize: 11, borderRadius: 20, textTransform: 'capitalize',
+                    border: `1px solid ${pitchAudience === a ? 'var(--blue)' : 'var(--border)'}`,
+                    background: pitchAudience === a ? 'rgba(56,139,221,0.08)' : 'transparent',
+                    color: pitchAudience === a ? 'var(--blue)' : 'var(--muted)',
+                    cursor: 'pointer', fontFamily: 'monospace',
+                  }}>{a}</button>
+                ))}
+              </div>
+
+              <textarea
+                value={pitchText}
+                onChange={e => setPitchText(e.target.value)}
+                placeholder={`Write your ${project.name} elevator pitch here...`}
+                style={{
+                  width: '100%', height: 120, padding: '12px 16px',
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: 8, color: 'var(--text)', fontSize: 13,
+                  resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.7,
+                  marginBottom: 10,
+                }}
+              />
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10 }}>
+                {pitchText.split(/\s+/).filter(Boolean).length} words · ~{Math.round((pitchText.split(/\s+/).filter(Boolean).length / 130) * 60)}s
+              </div>
+
+              <button onClick={async () => {
+                if (!pitchText.trim()) return
+                setPitchLoading(true)
+                try {
+                  const result = await api.getPitchFeedback(id, pitchText, pitchAudience)
+                  setPitchResult(result)
+                } finally {
+                  setPitchLoading(false)
+                }
+              }} disabled={pitchLoading || !pitchText.trim()} style={{
+                width: '100%', padding: '11px 0', background: 'var(--text)', color: 'var(--bg)',
+                border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
+                marginBottom: 16,
+              }}>
+                {pitchLoading ? 'Evaluating...' : 'Get pitch feedback →'}
+              </button>
+
+              {pitchResult && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                    <span style={{ fontSize: 32, fontWeight: 700, color: pitchResult.score >= 80 ? 'var(--green)' : pitchResult.score >= 60 ? 'var(--amber)' : 'var(--red)' }}>{pitchResult.score}</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{pitchResult.verdict === 'just right' ? '✓ Good length' : pitchResult.verdict === 'too long' ? '↓ Too long' : '↑ Too short'}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>{pitchResult.word_count} words · ~{pitchResult.estimated_seconds}s</div>
+                    </div>
+                  </div>
+
+                  {pitchResult.rewritten && (
+                    <div style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid var(--green)', borderRadius: 8, padding: 14 }}>
+                      <div style={{ fontSize: 10, color: 'var(--green)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>✓ Stronger version</div>
+                      <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{pitchResult.rewritten}</div>
+                    </div>
+                  )}
+
+                  {pitchResult.one_liner && (
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--amber)', borderRadius: 8, padding: 14 }}>
+                      <div style={{ fontSize: 10, color: 'var(--amber)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>One-liner</div>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{pitchResult.one_liner}</div>
+                    </div>
+                  )}
+
+                  {pitchResult.gaps?.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--red)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Missing</div>
+                      {pitchResult.gaps.map((g: string, i: number) => (
+                        <div key={i} style={{ fontSize: 12, color: 'var(--muted)', padding: '2px 0' }}>› {g}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {prepSection === 'why' && (
+            <div>
+              <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
+                Paste the job description for {project.company}. Claude will connect your {project.name} project to what they&apos;re building and write a compelling answer.
+              </div>
+
+              <textarea
+                value={jobDescription}
+                onChange={e => setJobDescription(e.target.value)}
+                placeholder="Paste the job description here..."
+                style={{
+                  width: '100%', height: 180, padding: '12px 16px',
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: 8, color: 'var(--text)', fontSize: 12,
+                  resize: 'none', outline: 'none', fontFamily: 'monospace', lineHeight: 1.7,
+                  marginBottom: 10,
+                }}
+              />
+
+              <button onClick={async () => {
+                if (!jobDescription.trim()) return
+                setWhyLoading(true)
+                try {
+                  const result = await api.getWhyThisCompany(id, jobDescription, project.company)
+                  setWhyResult(result)
+                } finally {
+                  setWhyLoading(false)
+                }
+              }} disabled={whyLoading || !jobDescription.trim()} style={{
+                width: '100%', padding: '11px 0', background: 'var(--text)', color: 'var(--bg)',
+                border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
+                marginBottom: 16,
+              }}>
+                {whyLoading ? 'Generating...' : 'Generate answer →'}
+              </button>
+
+              {whyResult && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ background: 'var(--surface)', border: '1px solid var(--green)', borderRadius: 10, padding: 16 }}>
+                    <div style={{ fontSize: 10, color: 'var(--green)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Your answer</div>
+                    <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.8 }}>{whyResult.main_answer}</div>
+                  </div>
+
+                  {whyResult.connection && (
+                    <div style={{ fontSize: 12, color: 'var(--blue)', padding: '8px 12px', background: 'rgba(56,139,221,0.06)', borderRadius: 6, border: '1px solid rgba(56,139,221,0.3)' }}>
+                      🔗 {whyResult.connection}
+                    </div>
+                  )}
+
+                  {whyResult.talking_points?.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>If they ask you to elaborate</div>
+                      {whyResult.talking_points.map((p: string, i: number) => (
+                        <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '4px 0', lineHeight: 1.6 }}>› {p}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {whyResult.what_to_avoid && (
+                    <div style={{ fontSize: 12, color: 'var(--amber)', padding: '8px 12px', background: 'rgba(245,166,35,0.06)', borderRadius: 6 }}>
+                      ⚠ Avoid: {whyResult.what_to_avoid}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {prepSection === 'feynman' && (
+            <div>
+              <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
+                Pick a concept from {project.name} and explain it like you&apos;re talking to a 12-year-old who has never coded. Claude scores whether they&apos;d actually understand it.
+              </div>
+
+              <input
+                value={feynmanConcept}
+                onChange={e => setFeynmanConcept(e.target.value)}
+                placeholder="What concept? e.g. JWT authentication, WebSocket connections, database indexing..."
+                style={{
+                  width: '100%', padding: '10px 14px', background: 'var(--surface)',
+                  border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)',
+                  fontSize: 13, outline: 'none', fontFamily: 'inherit', marginBottom: 10,
+                }}
+              />
+
+              <textarea
+                value={feynmanExplanation}
+                onChange={e => setFeynmanExplanation(e.target.value)}
+                placeholder="Explain it simply. Use an analogy. Pretend you're talking to someone who has never written code..."
+                style={{
+                  width: '100%', height: 140, padding: '12px 16px',
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  borderRadius: 8, color: 'var(--text)', fontSize: 13,
+                  resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.7,
+                  marginBottom: 10,
+                }}
+              />
+
+              <button onClick={async () => {
+                if (!feynmanConcept.trim() || !feynmanExplanation.trim()) return
+                setFeynmanLoading(true)
+                try {
+                  const result = await api.evaluateFeynman(id, feynmanConcept, feynmanExplanation)
+                  setFeynmanResult(result)
+                } finally {
+                  setFeynmanLoading(false)
+                }
+              }} disabled={feynmanLoading || !feynmanConcept.trim() || !feynmanExplanation.trim()} style={{
+                width: '100%', padding: '11px 0', background: 'var(--text)', color: 'var(--bg)',
+                border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
+                marginBottom: 16,
+              }}>
+                {feynmanLoading ? 'Checking...' : 'Check my explanation →'}
+              </button>
+
+              {feynmanResult && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                    <span style={{ fontSize: 32, fontWeight: 700, color: feynmanResult.score >= 80 ? 'var(--green)' : feynmanResult.score >= 60 ? 'var(--amber)' : 'var(--red)' }}>{feynmanResult.score}</span>
+                    <span style={{ fontSize: 14, color: feynmanResult.would_12yo_understand ? 'var(--green)' : 'var(--red)' }}>
+                      {feynmanResult.would_12yo_understand ? '✓ A 12-year-old would get this' : '✗ Still too technical'}
+                    </span>
+                  </div>
+
+                  {feynmanResult.simpler_version && (
+                    <div style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid var(--green)', borderRadius: 8, padding: 14 }}>
+                      <div style={{ fontSize: 10, color: 'var(--green)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Simpler version</div>
+                      <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{feynmanResult.simpler_version}</div>
+                    </div>
+                  )}
+
+                  {feynmanResult.better_analogy && (
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--amber)', borderRadius: 8, padding: 14 }}>
+                      <div style={{ fontSize: 10, color: 'var(--amber)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Better analogy</div>
+                      <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7 }}>{feynmanResult.better_analogy}</div>
+                    </div>
+                  )}
+
+                  {feynmanResult.what_confused && (
+                    <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
+                      <span style={{ color: 'var(--red)' }}>What confused:</span> {feynmanResult.what_confused}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {prepSection === 'defense' && aiDefense && (
+            <div>
+              <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
+                Prepared answers for common objections about AI-assisted development. Personalize these — don&apos;t recite them.
+              </div>
+
+              {aiDefense.objections?.map((obj: any, i: number) => (
+                <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--red)', marginBottom: 8 }}>&quot;{obj.question}&quot;</div>
+                  <div style={{ fontSize: 10, color: 'var(--amber)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Framework: {obj.framework}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7, background: 'var(--bg)', padding: 12, borderRadius: 8, border: '1px solid var(--border)', marginBottom: 10 }}>
+                    {obj.answer}
+                  </div>
+                  {obj.key_points?.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Key points</div>
+                      {obj.key_points.map((p: string, j: number) => (
+                        <div key={j} style={{ fontSize: 11, color: 'var(--muted)', padding: '2px 0', lineHeight: 1.5 }}>› {p}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {aiDefense.preparation_tips?.length > 0 && (
+                <div style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid var(--green)', borderRadius: 10, padding: 16 }}>
+                  <div style={{ fontSize: 10, color: 'var(--green)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Preparation tips</div>
+                  {aiDefense.preparation_tips.map((tip: string, i: number) => (
+                    <div key={i} style={{ fontSize: 12, color: 'var(--text)', padding: '4px 0', lineHeight: 1.6 }}>› {tip}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
